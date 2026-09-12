@@ -1,0 +1,29 @@
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+ios/Flutter/Generated.xcconfig
+ios/Runner/GeneratedPluginRegistrant.*
+android/app/debug/
+android/app/profile/
+android/app/release/
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# 测试与覆盖率
+coverage/
+.test_cache/
+
+# 沙箱隔离：SDK/缓存/构建生成物永不进仓库
+@env/
+env/.pub_cache/
+.env*
+
+# Hive 本地数据（示例/调试）
+*.hive
+android/local.properties
+android/.gradle/
