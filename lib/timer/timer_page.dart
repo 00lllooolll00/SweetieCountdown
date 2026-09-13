@@ -288,42 +288,48 @@ class _TimerPageState extends ConsumerState<TimerPage>
                 ),
                 Expanded(
                   child: Center(
-                    child: _Dial(
-                      engine: engine,
-                      frames: _frames,
-                      tag: selectedTag,
-                      onTapTime: _pickDuration,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _Dial(
+                          engine: engine,
+                          frames: _frames,
+                          tag: selectedTag,
+                          onTapTime: _pickDuration,
+                        ),
+                        const SizedBox(height: 18),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _RoundButton(
+                              icon: Icons.refresh_rounded,
+                              label: '重置',
+                              onTap: _onResetTap,
+                            ),
+                            const SizedBox(width: 28),
+                            _RoundButton(
+                              primary: true,
+                              icon: switch (status) {
+                                TimerStatus.idle => Icons.play_arrow_rounded,
+                                TimerStatus.running => Icons.pause_rounded,
+                                TimerStatus.paused => Icons.play_arrow_rounded,
+                                TimerStatus.finished => Icons.replay_rounded,
+                              },
+                              label: switch (status) {
+                                TimerStatus.idle => '开始',
+                                TimerStatus.running => '暂停',
+                                TimerStatus.paused => '继续',
+                                TimerStatus.finished => '再来一次',
+                              },
+                              onTap: _onPrimaryTap,
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _RoundButton(
-                      icon: Icons.refresh_rounded,
-                      label: '重置',
-                      onTap: _onResetTap,
-                    ),
-                    const SizedBox(width: 28),
-                    _RoundButton(
-                      primary: true,
-                      icon: switch (status) {
-                        TimerStatus.idle => Icons.play_arrow_rounded,
-                        TimerStatus.running => Icons.pause_rounded,
-                        TimerStatus.paused => Icons.play_arrow_rounded,
-                        TimerStatus.finished => Icons.replay_rounded,
-                      },
-                      label: switch (status) {
-                        TimerStatus.idle => '开始',
-                        TimerStatus.running => '暂停',
-                        TimerStatus.paused => '继续',
-                        TimerStatus.finished => '再来一次',
-                      },
-                      onTap: _onPrimaryTap,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 12),
               ],
             ),
             if (_celebrating) const _CandyBurst(),
@@ -446,10 +452,10 @@ class _Dial extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     _statusLabel(status, engine.mode),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
-                      color: SweetieColors.textLight,
+                      color: accent,
                     ),
                   ),
                   if (tag != null) ...[
@@ -460,7 +466,7 @@ class _Dial extends StatelessWidget {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: SweetieColors.soft(SweetieColors.pink),
+                        color: SweetieColors.pink.withValues(alpha: 0.16),
                         borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
                       ),
                       child: Text(
@@ -669,7 +675,7 @@ class _PresetChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : SweetieColors.soft(SweetieColors.pink),
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-          boxShadow: active ? SweetieTheme.buttonShadow() : null,
+          boxShadow: SweetieTheme.pillGlow(active: active),
         ),
         child: Text(
           '$minutes 分钟',
@@ -714,9 +720,17 @@ class _TagChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
+          // 未选中不再投影：一排胶囊的底部阴影会在标签条下沿连成一条粉带（视觉割裂）。
+          // 改用极淡描边立边界，几何恒定、只插值颜色，过冲曲线下也不会产生负 blur。
+          border: Border.all(
+            color: active
+                ? SweetieColors.pink
+                : SweetieColors.pink.withValues(alpha: 0.16),
+            width: 1.2,
+          ),
           boxShadow: <BoxShadow>[
             BoxShadow(
-              color: SweetieColors.pink.withValues(alpha: active ? 0.35 : 0.10),
+              color: SweetieColors.pink.withValues(alpha: active ? 0.30 : 0.0),
               blurRadius: 16,
               offset: const Offset(0, 6),
             ),
@@ -751,8 +765,8 @@ class _AddTagChip extends StatelessWidget {
           color: SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
           border: Border.all(
-            color: SweetieColors.pink.withValues(alpha: 0.32),
-            width: 1.4,
+            color: SweetieColors.pink.withValues(alpha: 0.20),
+            width: 1.2,
           ),
         ),
         child: const Row(
@@ -861,7 +875,10 @@ class _ModeToggle extends StatelessWidget {
           decoration: BoxDecoration(
             color: SweetieColors.white,
             borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-            boxShadow: SweetieTheme.cardShadow(SweetieColors.pink),
+            border: Border.all(
+              color: SweetieColors.pink.withValues(alpha: 0.16),
+              width: 1.2,
+            ),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -963,7 +980,7 @@ class _RoundButtonState extends State<_RoundButton> {
           style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
-            color: SweetieColors.textLight,
+            color: SweetieColors.text,
           ),
         ),
       ],

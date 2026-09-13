@@ -53,6 +53,19 @@ class SweetieTheme {
     ];
   }
 
+  /// 选择态光晕：几何恒定、只插值颜色。
+  /// 过冲曲线(easeOutBack)下阴影列表若长度变化，BoxShadow.lerp 会把 blur 外推成负数而触发
+  /// `Text shadow blur radius should be non-negative` 断言；固定单元素+透明色可彻底规避。
+  static List<BoxShadow> pillGlow({required bool active, Color color = SweetieColors.pink}) {
+    return <BoxShadow>[
+      BoxShadow(
+        color: color.withValues(alpha: active ? 0.35 : 0.0),
+        blurRadius: 16,
+        offset: const Offset(0, 6),
+      ),
+    ];
+  }
+
   static ThemeData toThemeData() {
     final ColorScheme scheme = ColorScheme.fromSeed(
       seedColor: SweetieColors.pink,
