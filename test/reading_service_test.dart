@@ -102,6 +102,7 @@ Dio _deadDio() => Dio()
   );
 
 void main() {
+  _googleAndCapTests();
   late Directory tempDir;
 
   setUp(() async {
@@ -455,6 +456,35 @@ void main() {
       expect(quotes[2].en, 'B');
       expect(parseQuotes('not json'), isEmpty);
       expect(randomQuote().en, isNotEmpty); // 未预热时也永远拿得到台词
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 翻译主接口(Google gtx)与正文裁剪
+// ---------------------------------------------------------------------------
+
+void _googleAndCapTests() {
+  group('翻译响应解析(Google gtx)', () {
+    test('正常响应:按片段拼接译文', () {
+      const String raw =
+          '[[["晨光缓缓照过山丘。","The morning light came slowly. ",null,null,3]],'
+          'null,"en",null,null,null,null,[]]';
+      expect(parseGoogleTranslate(raw), '晨光缓缓照过山丘。');
+    });
+
+    test('多片段:全部拼接', () {
+      const String raw =
+          '[[["第一句。","One. ",null,null,3],["第二句。","Two.",null,null,3]],'
+          'null,"en"]';
+      expect(parseGoogleTranslate(raw), '第一句。第二句。');
+    });
+
+    test('畸形输入:抛 FormatException', () {
+      expect(() => parseGoogleTranslate('{}'), throwsFormatException);
+      expect(() => parseGoogleTranslate('[]'), throwsFormatException);
+      expect(() => parseGoogleTranslate('[[], null]'), throwsFormatException);
+      expect(() => parseGoogleTranslate('[["x"]]'), throwsFormatException);
     });
   });
 }

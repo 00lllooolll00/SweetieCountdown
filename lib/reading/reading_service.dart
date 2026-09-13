@@ -228,6 +228,28 @@ ReadingArticle? parseWikiSummary(String jsonText) {
   );
 }
 
+/// 解析 Google 翻译端点(client=gtx)的响应;结构不符或译文为空时抛 [FormatException]。
+///
+/// 响应形如:[[["译文片段","原文片段",...],[...]], null, "en", ...]
+/// —— 取第一层数组里每个片段的第 0 项拼起来。
+String parseGoogleTranslate(String jsonText) {
+  final Object? decoded = jsonDecode(jsonText);
+  if (decoded is! List || decoded.isEmpty) {
+    throw const FormatException('翻译响应异常');
+  }
+  final Object? segments = decoded[0];
+  if (segments is! List) throw const FormatException('翻译响应异常');
+  final StringBuffer buffer = StringBuffer();
+  for (final Object? seg in segments) {
+    if (seg is List && seg.isNotEmpty && seg[0] is String) {
+      buffer.write(seg[0] as String);
+    }
+  }
+  final String result = buffer.toString().trim();
+  if (result.isEmpty) throw const FormatException('翻译返回为空');
+  return result;
+}
+
 /// 把长文切成翻译接口友好的小块（按句子边界，单块不超过 [maxChars]）。
 List<String> splitForTranslation(String text, [int maxChars = 420]) {
   final String clean = text.trim();
@@ -427,7 +449,19 @@ class ReadingService {
       'https://api.mymemory.translated.net/get';
   static const String _userAgent = 'SweetieCountdown/1.0 (daily reading)';
   static const int _maxCached = 30;
-  static const int _translationChunkChars = 420;
+  /// 单块字符上限:实测 MyMemory 在 ~500 字符以上会「静默只翻前半段」,
+  /// 450 留出安全余量,保证每块都完整译出。
+  static const int _translationChunkChars = 450;
+
+  /// MyMemory 的联系邮箱:带有效邮箱的请求配额从 5k 提到 50k 字符/天,
+  /// 不带的话每天看两三篇就会耗尽(表现为「翻译暂时不可用」)。
+  /// 用 GitHub noreply 格式,不会打扰到具体的人;换成自己的邮箱也行。
+  static const String _mymemoryContact = 'sweetie-countdown@users.noreply.github.com';
+
+  /// Google 免费翻译端点(client=gtx):无 key、质量与稳定性都优于 MyMemory,
+  /// 作为首选;失败再回退 MyMemory。
+  static const String _googleEndpoint =
+      'https://translate.googleapis.com/translate_a/single';
 
   final Dio _dio;
   final Future<String> Function(String text)? _translate;
@@ -613,10 +647,34 @@ class ReadingService {
     return translated.join('\n\n');
   }
 
-  Future<String> _translateText(String text) {
-    final Future<String> Function(String) translate =
-        _translate ?? _translateByMyMemory;
-    return translate(text);
+  /// 翻译单块:测试注入优先 → MyMemory(稳定) → Google(海外/带代理时可用)。
+  /// 两路都失败时把异常抛给上层,由 [_localize] 降级为「保留英文 + 提示」。
+  Future<String> _translateText(String text) async {
+    final Future<String> Function(String)? injected = _translate;
+    if (injected != null) return injected(text);
+    try {
+      return await _translateByMyMemory(text);
+    } catch (_) {
+      return _translateByGoogle(text);
+    }
+  }
+
+  /// Google 免费端点(首选):响应形如 [[["译文","原文",...],...],...]。
+  Future<String> _translateByGoogle(String text) async {
+    final Response<String> response = await _dio
+        .get<String>(
+          _googleEndpoint,
+          queryParameters: <String, String>{
+            'client': 'gtx',
+            'sl': 'en',
+            'tl': 'zh-CN',
+            'dt': 't',
+            'q': text,
+          },
+          options: Options(responseType: ResponseType.plain),
+        )
+        .timeout(_httpTimeout);
+    return parseGoogleTranslate(response.data ?? '');
   }
 
   /// 免费翻译接口（MyMemory），失败即抛，由 [_localize] 兜底。
@@ -627,6 +685,7 @@ class ReadingService {
           queryParameters: <String, String>{
             'q': text,
             'langpair': 'en|zh-CN',
+            'de': _mymemoryContact,
           },
           options: Options(responseType: ResponseType.plain),
         )
@@ -821,10 +880,24 @@ String _feedLink(XmlElement node) {
   return _elementText(node, const <String>['guid', 'id']);
 }
 
-String _capBody(String text, {int maxChars = 1400}) {
+String _capBody(String text, {int maxChars = 2400}) {
   final String clean = text.trim();
   if (clean.length <= maxChars) return clean;
-  return '${clean.substring(0, maxChars).trimRight()}…';
+  // 尽量在句子边界收尾:硬切在词中会有"话说到一半被砍"的观感。
+  final int softEnd = _lastSentenceEnd(clean, maxChars);
+  final String clipped = clean.substring(0, softEnd).trimRight();
+  return '$clipped…';
+}
+
+/// 在 [limit] 之前找最后一个句子结束符的位置;找不到就退回硬边界。
+int _lastSentenceEnd(String text, int limit) {
+  for (int i = limit - 1; i > limit ~/ 2; i--) {
+    final String ch = text[i];
+    if (ch == '.' || ch == '!' || ch == '?' || ch == '\n' || ch == '。') {
+      return i + 1;
+    }
+  }
+  return limit;
 }
 
 /// FNV-1a：稳定、无依赖的文章 id（重启后收藏/缓存仍能对上）。
