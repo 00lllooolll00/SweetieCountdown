@@ -85,8 +85,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     expect(container.read(selectedTagProvider), '专注', reason: '正计时运行中同样锁定');
 
-    // 「结束」回到空闲后恢复可切换（运行中左按钮是停止图标）。
-    await tester.tap(find.byIcon(Icons.stop_rounded));
+    // 长按主键蓄力 1.5 秒结束，回到空闲后恢复可切换。
+    final TestGesture hold = await tester.startGesture(
+      tester.getCenter(find.byIcon(Icons.pause_rounded)),
+    );
+    await tester.pump(const Duration(milliseconds: 60)); // 让按下事件进手势竞技场
+    await tester.pump(const Duration(milliseconds: 1600));
+    await tester.pump(const Duration(milliseconds: 200));
+    await hold.up();
     await tester.pump(const Duration(milliseconds: 600));
     await tester.tap(find.text('# 学习'), warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 400));

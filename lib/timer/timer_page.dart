@@ -183,16 +183,6 @@ class _TimerPageState extends ConsumerState<TimerPage>
     _syncTicker();
   }
 
-  void _onResetTap() {
-    final engine = ref.read(timerEngineProvider);
-    if (engine.mode == TimerMode.stopwatch && engine.isActive) {
-      unawaited(_recordElapsed(engine));
-    }
-    ref.read(timerEngineProvider.notifier).reset();
-    _clearCelebration();
-    _syncTicker();
-  }
-
   /// 点表盘时间:倒计时未开始 / 刚结束时选新时长;进行中只提示,不改时长。
   Future<void> _pickDuration() async {
     final engine = ref.read(timerEngineProvider);
@@ -424,38 +414,24 @@ class _TimerPageState extends ConsumerState<TimerPage>
                           onTapTime: _pickDuration,
                         ),
                         const SizedBox(height: 18),
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            _RoundButton(
-                              icon: canEnd
-                                  ? Icons.stop_rounded
-                                  : Icons.refresh_rounded,
-                              label: canEnd
-                                  ? (engine.mode == TimerMode.countdown
-                                      ? '提前结束'
-                                      : '结束')
-                                  : '重置',
-                              onTap: canEnd ? _onEndTap : _onResetTap,
-                            ),
-                            const SizedBox(width: 28),
-                            _RoundButton(
-                              primary: true,
-                              icon: switch (status) {
-                                TimerStatus.idle => Icons.play_arrow_rounded,
-                                TimerStatus.running => Icons.pause_rounded,
-                                TimerStatus.paused => Icons.play_arrow_rounded,
-                                TimerStatus.finished => Icons.replay_rounded,
-                              },
-                              label: switch (status) {
-                                TimerStatus.idle => '开始',
-                                TimerStatus.running => '暂停',
-                                TimerStatus.paused => '继续',
-                                TimerStatus.finished => '再来一次',
-                              },
-                              onTap: _onPrimaryTap,
-                            ),
-                          ],
+                        // 单一大键：单击开始/暂停/继续，长按 1.5 秒结束并结算。
+                        _PrimaryActionButton(
+                          icon: switch (status) {
+                            TimerStatus.idle => Icons.play_arrow_rounded,
+                            TimerStatus.running => Icons.pause_rounded,
+                            TimerStatus.paused => Icons.play_arrow_rounded,
+                            TimerStatus.finished => Icons.replay_rounded,
+                          },
+                          label: switch (status) {
+                            TimerStatus.idle => '开始',
+                            TimerStatus.running => '暂停 · 长按结束',
+                            TimerStatus.paused => '继续 · 长按结束',
+                            TimerStatus.finished => '再来一次',
+                          },
+                          accent: accent,
+                          holdEnabled: canEnd,
+                          onTap: _onPrimaryTap,
+                          onHoldComplete: _onEndTap,
                         ),
                       ],
                     ),
@@ -971,67 +947,136 @@ class _TagInputDialogState extends State<_TagInputDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// 控制按钮
+// 计时主键(单击 / 长按蓄力)
 // ---------------------------------------------------------------------------
 
-class _RoundButton extends StatefulWidget {
-  const _RoundButton({
+/// 计时主键:单击开始/暂停/继续;计时中或暂停时长按蓄力 1.5 秒结束并结算。
+///
+/// 长按期间外圈画一道草莓粉蓄力环([_HoldRingPainter]),松手立即反向回缩、不结算;
+/// 蓄满瞬间给 [HapticFeedback.heavyImpact] 重反馈并回调,环随后平滑淡出。
+/// 空闲/刚结束时 [holdEnabled] 为 false —— 长按不启动,避免空按出环。
+class _PrimaryActionButton extends StatefulWidget {
+  const _PrimaryActionButton({
     required this.icon,
     required this.label,
-    required this.onTap,
-    this.primary = false,
+    required this.accent,
+    required this.holdEnabled,
+    this.onTap,
+    this.onHoldComplete,
   });
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
-  final bool primary;
+  final Color accent;
+
+  /// 长按结束是否可用(仅「计时中/暂停中」为 true)。
+  final bool holdEnabled;
+
+  final VoidCallback? onTap;
+  final VoidCallback? onHoldComplete;
 
   @override
-  State<_RoundButton> createState() => _RoundButtonState();
+  State<_PrimaryActionButton> createState() => _PrimaryActionButtonState();
 }
 
-class _RoundButtonState extends State<_RoundButton> {
+class _PrimaryActionButtonState extends State<_PrimaryActionButton>
+    with SingleTickerProviderStateMixin {
+  /// 蓄力时长:1.5 秒按满才算数(3 秒太长,按着容易累)。
+  static const Duration _holdDuration = Duration(milliseconds: 1500);
+
+  /// 按钮直径(76~80 之间取 78)。
+  static const double _buttonSize = 78;
+
+  /// 外圈蓄力环的绘制区:比按钮大一圈,给环留位置。
+  static const double _ringSize = _buttonSize + 20;
+
+  late final AnimationController _hold = AnimationController(
+    vsync: this,
+    duration: _holdDuration,
+  )..addStatusListener(_onHoldStatus);
+
   bool _pressed = false;
 
-  void _setPressed(bool value) {
-    if (_pressed != value) setState(() => _pressed = value);
+  @override
+  void dispose() {
+    _hold.dispose();
+    super.dispose();
   }
+
+  void _onHoldStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed) return;
+    HapticFeedback.heavyImpact();
+    widget.onHoldComplete?.call();
+    // 结算后环不要停在满圈:平滑回缩淡出。
+    _hold.reverse();
+  }
+
+  void _startHold() {
+    if (widget.holdEnabled) _hold.forward();
+  }
+
+  void _cancelHold() => _hold.reverse();
 
   @override
   Widget build(BuildContext context) {
-    final size = widget.primary ? 92.0 : 64.0;
     return Column(
       mainAxisSize: MainAxisSize.min,
-      children: [
+      children: <Widget>[
         GestureDetector(
           onTap: widget.onTap,
-          onTapDown: (_) => _setPressed(true),
-          onTapUp: (_) => _setPressed(false),
-          onTapCancel: () => _setPressed(false),
+          onTapDown: (_) => setState(() => _pressed = true),
+          onTapUp: (_) => setState(() => _pressed = false),
+          onTapCancel: () => setState(() => _pressed = false),
+          // 按下即开始蓄力;无论是长按取消(提前松手)还是长按抬起,都回缩。
+          onLongPressDown: (_) => _startHold(),
+          onLongPressCancel: _cancelHold,
+          onLongPressUp: _cancelHold,
           child: AnimatedScale(
-            scale: _pressed ? 0.92 : 1,
+            scale: _pressed ? 0.96 : 1.0,
             duration: const Duration(milliseconds: 120),
             curve: Curves.easeOut,
-            child: Container(
-              width: size,
-              height: size,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: widget.primary ? SweetieColors.pink : SweetieColors.white,
-                boxShadow: widget.primary
-                    ? SweetieTheme.buttonShadow(SweetieColors.pink)
-                    : SweetieTheme.cardShadow(SweetieColors.pink),
+            child: AnimatedBuilder(
+              animation: _hold,
+              builder: (BuildContext context, Widget? child) => CustomPaint(
+                painter: _HoldRingPainter(
+                  progress: _hold.value,
+                  color: widget.accent,
+                ),
+                child: child,
               ),
-              child: Icon(
-                widget.icon,
-                size: widget.primary ? 42 : 28,
-                color: widget.primary ? SweetieColors.white : SweetieColors.pink,
+              child: SizedBox.square(
+                dimension: _ringSize,
+                child: Center(
+                  child: Container(
+                    width: _buttonSize,
+                    height: _buttonSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: SweetieColors.pink,
+                      boxShadow: SweetieTheme.buttonShadow(widget.accent),
+                    ),
+                    // 图标切换做缩放+淡入,不做硬切。
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 220),
+                      transitionBuilder: (Widget child, Animation<double> anim) =>
+                          ScaleTransition(
+                        scale: anim,
+                        child: FadeTransition(opacity: anim, child: child),
+                      ),
+                      child: Icon(
+                        widget.icon,
+                        key: ValueKey<IconData>(widget.icon),
+                        size: 38,
+                        color: SweetieColors.white,
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 10),
         Text(
           widget.label,
           style: const TextStyle(
@@ -1043,6 +1088,37 @@ class _RoundButtonState extends State<_RoundButton> {
       ],
     );
   }
+}
+
+/// 蓄力环:从 12 点起顺时针画满整圈(progress 0..1),只在长按期间可见。
+class _HoldRingPainter extends CustomPainter {
+  const _HoldRingPainter({required this.progress, required this.color});
+
+  final double progress;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double value = progress.clamp(0.0, 1.0);
+    if (value <= 0) return;
+    final Offset center = size.center(Offset.zero);
+    final double radius = size.shortestSide / 2 - 4;
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      -math.pi / 2,
+      math.pi * 2 * value,
+      false,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4
+        ..strokeCap = StrokeCap.round
+        ..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_HoldRingPainter oldDelegate) =>
+      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 // ---------------------------------------------------------------------------
