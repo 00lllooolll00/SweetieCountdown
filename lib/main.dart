@@ -153,7 +153,7 @@ class _NavCapsule extends StatelessWidget {
         onTap: onTap,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutBack,
+          curve: Curves.easeOutCubic,
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
           decoration: BoxDecoration(
             color: selected ? item.color : Colors.transparent,
