@@ -71,6 +71,9 @@ class _SweetieHomeShellState extends State<SweetieHomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // 键盘只在弹窗里用（页面无输入框）；若按默认压缩 body，
+      // 会把专注页的表盘+按钮组挤爆（RenderFlex overflow 黄黑条纹）。
+      resizeToAvoidBottomInset: false,
       body: IndexedStack(
         index: _index,
         children: <Widget>[
