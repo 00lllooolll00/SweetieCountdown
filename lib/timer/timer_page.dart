@@ -640,19 +640,23 @@ class _DurationWheelSheetState extends State<_DurationWheelSheet> {
               ),
             ),
           ),
-          // 上下虚化:让未选中的数字随距离淡出(ShaderMask 只作用于本层)。
+          // 上下虚化:选中行清晰(1.0)、相邻格约 0.36、最远格接近透明,
+          // 让"未选中"是真的虚下去(此前不透明带太宽,邻格数字仍然发黑)。
           ShaderMask(
             blendMode: BlendMode.dstIn,
-            shaderCallback: (Rect rect) => const LinearGradient(
+            shaderCallback: (Rect rect) => LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: <Color>[
-                Colors.transparent,
+                Colors.white.withValues(alpha: 0.0),
+                Colors.white.withValues(alpha: 0.16),
+                Colors.white.withValues(alpha: 0.42),
                 Colors.white,
-                Colors.white,
-                Colors.transparent,
+                Colors.white.withValues(alpha: 0.42),
+                Colors.white.withValues(alpha: 0.16),
+                Colors.white.withValues(alpha: 0.0),
               ],
-              stops: <double>[0.0, 0.30, 0.70, 1.0],
+              stops: const <double>[0.0, 0.18, 0.33, 0.50, 0.67, 0.82, 1.0],
             ).createShader(rect),
             child: Row(
               children: <Widget>[
