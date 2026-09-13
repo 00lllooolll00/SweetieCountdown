@@ -328,6 +328,10 @@ class _TimerPageState extends ConsumerState<TimerPage>
     // 计时进行中/暂停中：左侧按钮变为「提前结束」（倒计时）/「结束」（正计时）。
     final bool canEnd =
         status == TimerStatus.running || status == TimerStatus.paused;
+    // 计时中锁定标签与模式：不允许中途换 Tag（记录归属会跟着变），
+    // 空闲 / 刚结束时才可自由切换。
+    final bool canSwitchTag =
+        status == TimerStatus.idle || status == TimerStatus.finished;
     // 整页氛围色：与表盘同源，让顶部模式切换/标签/表盘/按钮共享一个背景光。
     final accent = switch (status) {
       TimerStatus.finished => SweetieColors.green,
@@ -366,13 +370,17 @@ class _TimerPageState extends ConsumerState<TimerPage>
                   onChanged: (int i) => ref
                       .read(timerEngineProvider.notifier)
                       .setMode(i == 0 ? TimerMode.countdown : TimerMode.stopwatch),
-                  enabled:
-                      status == TimerStatus.idle || status == TimerStatus.finished,
+                  enabled: canSwitchTag,
                   height: 44,
                   borderColor: SweetieColors.pink.withValues(alpha: 0.16),
                 ),
                 const SizedBox(height: 12),
-                SizedBox(
+                // 计时中标签条变淡且不吃点击（与模式切换器的禁用观感一致）。
+                Opacity(
+                  opacity: canSwitchTag ? 1 : 0.45,
+                  child: IgnorePointer(
+                    ignoring: !canSwitchTag,
+                    child: SizedBox(
                   // 高度 = 胶囊 44 + 上下各 20 的光晕空间:ListView 默认硬裁切,
                   // 不留空间的话选中胶囊的柔光只剩左右两截,上下会被切掉。
                   height: 84,
@@ -399,6 +407,8 @@ class _TimerPageState extends ConsumerState<TimerPage>
                         onLongPress: () => _showTagActions(tag),
                       );
                     },
+                  ),
+                    ),
                   ),
                 ),
                 Expanded(
