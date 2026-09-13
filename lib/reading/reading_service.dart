@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'tencent_translate.dart';
+import '../settings/translation_settings.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -429,10 +430,12 @@ class ReadingService {
   ReadingService({
     Dio? dio,
     Future<String> Function(String text)? translate,
+    TranslationSettings Function()? readSettings,
     Duration httpTimeout = const Duration(seconds: 8),
     Random? random,
   })  : _dio = dio ?? Dio(),
         _translate = translate,
+        _readSettings = readSettings,
         _httpTimeout = httpTimeout,
         _random = random ?? Random();
 
@@ -466,6 +469,9 @@ class ReadingService {
 
   final Dio _dio;
   final Future<String> Function(String text)? _translate;
+
+  /// 翻译设置（厂商 + 腾讯云密钥）；null 视为 auto（旧行为）。
+  final TranslationSettings Function()? _readSettings;
   final Duration _httpTimeout;
 
   /// 可选密钥文件（不进仓库）:{"tencentSecretId":"...","tencentSecretKey":"..."}
@@ -655,19 +661,48 @@ class ReadingService {
     return translated.join('\n\n');
   }
 
-  /// 翻译单块:测试注入优先 → 腾讯云(配了密钥,500 万字符/月) → MyMemory → Google。
-  /// 全失败时把异常抛给上层,由 [_localize] 降级为「保留英文 + 提示」。
+  /// 翻译单块：测试注入优先 → 按「翻译设置」选厂商 → 逐级兜底。
+  /// 全失败时把异常抛给上层，由 [_localize] 降级为「保留英文 + 提示」。
+  ///
+  /// 链：
+  ///  - auto / 腾讯云：Hive 密钥 → assets/secrets.json 密钥 → MyMemory → Google；
+  ///  - MyMemory：MyMemory → Google；Google：Google → MyMemory（互兜底，不白屏）。
   Future<String> _translateText(String text) async {
     final Future<String> Function(String)? injected = _translate;
     if (injected != null) return injected(text);
-    final TencentTranslator? tencent = await _tencentClient();
-    if (tencent != null) {
-      try {
-        return await tencent.translate(text, dio: _dio, timeout: _httpTimeout);
-      } catch (_) {
-        // 配额用尽 / 密钥失效 / 网络异常:继续走免费链,不让整篇翻译失败。
-      }
+    final TranslationSettings settings =
+        _readSettings?.call() ?? const TranslationSettings();
+    switch (settings.vendor) {
+      case TranslationVendor.mymemory:
+        return _myMemoryThenGoogle(text);
+      case TranslationVendor.google:
+        return _googleThenMyMemory(text);
+      case TranslationVendor.tencent:
+      case TranslationVendor.auto:
+        final TencentTranslator? tencent = settings.hasTencentKeys
+            ? TencentTranslator(
+                secretId: settings.tencentSecretId.trim(),
+                secretKey: settings.tencentSecretKey.trim(),
+              )
+            // Hive 未配密钥：次选 assets/secrets.json（老配置照旧生效）。
+            : await _tencentClient();
+        if (tencent != null) {
+          try {
+            return await tencent.translate(
+              text,
+              dio: _dio,
+              timeout: _httpTimeout,
+            );
+          } catch (_) {
+            // 配额用尽 / 密钥失效 / 网络异常：继续往下走，不让整篇翻译失败。
+          }
+        }
+        return _myMemoryThenGoogle(text);
     }
+  }
+
+  /// MyMemory 优先、Google 兜底（两个免费端点互备）。
+  Future<String> _myMemoryThenGoogle(String text) async {
     try {
       return await _translateByMyMemory(text);
     } catch (_) {
@@ -675,8 +710,18 @@ class ReadingService {
     }
   }
 
+  /// Google 优先、MyMemory 兜底（用户手选 Google 时的备胎）。
+  Future<String> _googleThenMyMemory(String text) async {
+    try {
+      return await _translateByGoogle(text);
+    } catch (_) {
+      return await _translateByMyMemory(text);
+    }
+  }
+
   /// 读取可选的腾讯云密钥（`assets/secrets.json`，已 gitignore）。
-  /// 没配 / 读不到 / 字段为空 → 返回 null，翻译自动走免费链。
+  /// 仅在用户没在 Hive 里配密钥时作为次选；没配 / 读不到 / 字段为空 → 返回
+  /// null，翻译自动走免费链。
   Future<TencentTranslator?> _tencentClient() async {
     if (_tencentResolved) return _tencentClientCache;
     _tencentResolved = true;
@@ -952,9 +997,11 @@ String _articleId(String seed) {
 // Providers
 // ---------------------------------------------------------------------------
 
-/// 全局阅读服务。
+/// 全局阅读服务；翻译厂商与腾讯云密钥从「翻译设置」实时读取。
 final Provider<ReadingService> readingServiceProvider =
-    Provider<ReadingService>((Ref ref) => ReadingService());
+    Provider<ReadingService>((Ref ref) => ReadingService(
+          readSettings: () => ref.read(translationSettingsProvider),
+        ));
 
 /// 当前展示的文章；“换一篇 / 下拉刷新”只需 invalidate 本 provider。
 final FutureProvider<ReadingArticle> readingArticleProvider =

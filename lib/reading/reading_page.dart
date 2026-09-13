@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../settings/translation_settings_sheet.dart';
 import '../theme/sweetie_theme.dart';
 import 'favorites_page.dart';
 import 'reading_service.dart';
@@ -106,6 +107,22 @@ class _Header extends StatelessWidget {
           ),
           const Spacer(),
           const FavoritesEntryButton(),
+          const SizedBox(width: 4),
+          IconButton(
+            tooltip: '翻译设置',
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 38, height: 38),
+            onPressed: () => showModalBottomSheet<bool>(
+              context: context,
+              isScrollControlled: true,
+              builder: (_) => const TranslationSettingsSheet(),
+            ),
+            icon: const Icon(
+              Icons.settings_rounded,
+              size: 22,
+              color: SweetieColors.pink,
+            ),
+          ),
         ],
       ),
     );

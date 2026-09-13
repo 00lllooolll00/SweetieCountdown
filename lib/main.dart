@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:sweetie_countdown/reading/reading_page.dart';
 import 'package:sweetie_countdown/reading/reading_service.dart';
 import 'package:sweetie_countdown/reading/splash_page.dart';
+import 'package:sweetie_countdown/settings/translation_settings.dart';
 import 'package:sweetie_countdown/stats/stats_logic.dart';
 import 'package:sweetie_countdown/stats/stats_page.dart';
 import 'package:sweetie_countdown/theme/sweetie_theme.dart';
@@ -21,6 +22,7 @@ Future<void> main() async {
   await openTagBox(); // 打开 sweetie_tags
   await Hive.openBox<String>(ReadingService.cacheBoxName); // 打开 reading_cache
   await Hive.openBox<String>(ReadingService.favoriteBoxName); // 打开 reading_favorites
+  await Hive.openBox<dynamic>(kSettingsBoxName); // 打开 app_settings（翻译服务设置）
   await preloadQuotes(); // 治愈短句预热，失败不抛
 
   runApp(const ProviderScope(child: SweetieApp()));
