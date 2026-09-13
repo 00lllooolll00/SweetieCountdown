@@ -17,8 +17,9 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.sweetie.sweetie_countdown"
-    compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // 离线沙箱:用 @env/android-sdk 内拷贝包构建(最高 android-35/build-tools 34)，不用 NDK。
+    compileSdk = 35
+    buildToolsVersion = "34.0.0"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
