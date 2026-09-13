@@ -126,9 +126,9 @@ class _TimerPageState extends ConsumerState<TimerPage>
     _syncTicker();
   }
 
-  /// 正计时重置前先留痕:已用 ≥1s 才落库(误触不留噪音记录),再清零。
-  /// 终点取 `pausedAt ?? now`:暂停中重置不会把暂停时长算进去。
-  Future<void> _recordStopwatch(TimerEngine engine) async {
+  /// 结束/中断前留痕:已用 ≥1s 才落库(误触不留噪音记录),再清零。
+  /// 终点取 `pausedAt ?? now`:暂停中结束不会把暂停时长算进去。
+  Future<void> _recordElapsed(TimerEngine engine) async {
     final start = engine.startedAt;
     if (start == null) return;
     final end = engine.pausedAt ?? DateTime.now();
@@ -144,10 +144,21 @@ class _TimerPageState extends ConsumerState<TimerPage>
     }
   }
 
+  /// 结束当前一轮:倒计时「提前结束」、正计时「结束」,都会把已用时长记进统计。
+  void _onEndTap() {
+    final engine = ref.read(timerEngineProvider);
+    if (engine.isActive) {
+      unawaited(_recordElapsed(engine));
+    }
+    ref.read(timerEngineProvider.notifier).reset();
+    if (_celebrating) setState(() => _celebrating = false);
+    _syncTicker();
+  }
+
   void _onResetTap() {
     final engine = ref.read(timerEngineProvider);
     if (engine.mode == TimerMode.stopwatch && engine.isActive) {
-      unawaited(_recordStopwatch(engine));
+      unawaited(_recordElapsed(engine));
     }
     ref.read(timerEngineProvider.notifier).reset();
     if (_celebrating) setState(() => _celebrating = false);
@@ -233,6 +244,9 @@ class _TimerPageState extends ConsumerState<TimerPage>
     final tags = ref.watch(tagHistoryProvider);
     final selectedTag = ref.watch(selectedTagProvider);
     final status = engine.statusAt(DateTime.now());
+    // 计时进行中/暂停中：左侧按钮变为「提前结束」（倒计时）/「结束」（正计时）。
+    final bool canEnd =
+        status == TimerStatus.running || status == TimerStatus.paused;
     // 整页氛围色：与表盘同源，让顶部模式切换/标签/表盘/按钮共享一个背景光。
     final accent = switch (status) {
       TimerStatus.finished => SweetieColors.green,
@@ -279,10 +293,16 @@ class _TimerPageState extends ConsumerState<TimerPage>
                 ),
                 const SizedBox(height: 12),
                 SizedBox(
-                  height: 48,
+                  // 高度 = 胶囊 44 + 上下各 20 的光晕空间:ListView 默认硬裁切,
+                  // 不留空间的话选中胶囊的柔光只剩左右两截,上下会被切掉。
+                  height: 84,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    clipBehavior: Clip.none,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 20,
+                    ),
                     itemCount: tags.length + 1,
                     separatorBuilder: (_, __) => const SizedBox(width: 10),
                     itemBuilder: (context, index) {
@@ -317,9 +337,15 @@ class _TimerPageState extends ConsumerState<TimerPage>
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _RoundButton(
-                              icon: Icons.refresh_rounded,
-                              label: '重置',
-                              onTap: _onResetTap,
+                              icon: canEnd
+                                  ? Icons.stop_rounded
+                                  : Icons.refresh_rounded,
+                              label: canEnd
+                                  ? (engine.mode == TimerMode.countdown
+                                      ? '提前结束'
+                                      : '结束')
+                                  : '重置',
+                              onTap: canEnd ? _onEndTap : _onResetTap,
                             ),
                             const SizedBox(width: 28),
                             _RoundButton(
@@ -408,8 +434,11 @@ class _BreathingBlob extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double t =
-        Curves.easeInOutSine.transform((breathValue + blob.phase) % 1.0);
+    // 连续三角波(0→1→0→1...):递增到最大再递减到最小,循环往复;
+    // 直接用 (v+phase)%1 会在环绕处跳变,呼吸就不平滑了。
+    final double p = (breathValue + blob.phase) % 2.0;
+    final double tri = p <= 1.0 ? p : 2.0 - p;
+    final double t = Curves.easeInOutSine.transform(tri);
     final Color c = blob.color(tint);
     final double alpha = 0.05 + 0.09 * t;
     return Align(
@@ -519,14 +548,28 @@ class _Dial extends StatelessWidget {
                 height: 226,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: SweetieColors.white,
+                  // 糖感:中心纯白,向边缘晕一层极淡状态色,比死白更"软"。
+                  gradient: RadialGradient(
+                    colors: <Color>[
+                      SweetieColors.white,
+                      Color.alphaBlend(
+                        accent.withValues(alpha: 0.06),
+                        SweetieColors.white,
+                      ),
+                    ],
+                    stops: const <double>[0.55, 1.0],
+                  ),
                   boxShadow: SweetieTheme.cardShadow(accent),
                 ),
               ),
               CustomPaint(
                 size: const Size.square(_dialSize),
                 painter: _RingPainter(
-                  progress: engine.progressAt(now),
+                  progress: engine.mode == TimerMode.countdown
+                      // 倒计时:环从全满向空递减(剩余比例)。
+                      // 引擎给的是"已用比例"(递增),此处取反;正计时保持每分钟一圈递增。
+                      ? 1.0 - engine.progressAt(now)
+                      : engine.progressAt(now),
                   color: accent,
                 ),
               ),
@@ -617,7 +660,7 @@ class _RingPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
         ..strokeCap = StrokeCap.round
-        ..color = SweetieColors.pink.withValues(alpha: 0.14),
+        ..color = color.withValues(alpha: 0.14),
     );
 
     final clamped = progress.clamp(0.0, 1.0);
@@ -635,6 +678,19 @@ class _RingPainter extends CustomPainter {
           colors: <Color>[color, SweetieColors.yellow],
           transform: const GradientRotation(-math.pi / 2),
         ).createShader(rect),
+    );
+
+    // 弧头糖果珠:跟着进度走,白边 + 焦糖心,给表盘一个"可读的端点"。
+    final double head = -math.pi / 2 + math.pi * 2 * clamped;
+    final Offset tip = Offset(
+      center.dx + math.cos(head) * radius,
+      center.dy + math.sin(head) * radius,
+    );
+    canvas.drawCircle(tip, stroke * 0.62, Paint()..color = SweetieColors.white);
+    canvas.drawCircle(
+      tip,
+      stroke * 0.40,
+      Paint()..color = SweetieColors.yellow,
     );
   }
 
@@ -821,14 +877,20 @@ class _TagChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-          // 阴影全部去掉:选中态的光晕会在胶囊底部向外扩展出一条粉带,
-          // 与相邻胶囊连成横线,是"割裂感"的根源。选中只靠实心粉+描边立层级。
           border: Border.all(
             color: active
                 ? SweetieColors.pink
                 : SweetieColors.pink.withValues(alpha: 0.16),
             width: 1.2,
           ),
+          // 选中态:四周均匀扩散的柔粉光(offset 归零 → 不偏向底部,不会连成横线)。
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: SweetieColors.pink.withValues(alpha: active ? 0.30 : 0.0),
+              blurRadius: 18,
+              spreadRadius: 1,
+            ),
+          ],
         ),
         child: Text(
           '# $label',
