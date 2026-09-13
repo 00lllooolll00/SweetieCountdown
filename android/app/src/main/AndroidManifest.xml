@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 联网权限：debug/profile 变体由 Flutter 工具自动注入，release 不会——
+         缺了它，release 包的阅读抓取/翻译/RSS 全部静默失败。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="莓好倒数"
         android:name="${applicationName}"
