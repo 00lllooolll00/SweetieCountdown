@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../reading/tencent_translate.dart';
 import '../theme/sweetie_theme.dart';
 import 'translation_settings.dart';
 
@@ -29,6 +31,11 @@ class TranslationSettingsSheet extends ConsumerStatefulWidget {
 
 class _TranslationSettingsSheetState
     extends ConsumerState<TranslationSettingsSheet> {
+  /// 连通性测试状态：进行中禁用按钮，结果用文字留在面板里（比 SnackBar 持久）。
+  bool _testing = false;
+  String? _testResult;
+  bool _testOk = false;
+
   /// 输入先落在本地字段，点「保存」才写回 store。
   late TranslationVendor _vendor;
   late String _secretId;
@@ -61,6 +68,64 @@ class _TranslationSettingsSheetState
   /// 腾讯云与自动模式都会用到密钥，选中时把输入区展开。
   bool get _needsKeys =>
       _vendor == TranslationVendor.auto || _vendor == TranslationVendor.tencent;
+
+  /// 用当前输入框里的密钥真实调一次腾讯云 TextTranslate（译一句问候语），
+  /// 把结果（成功译文 / 失败原因）留在面板上——让用户自己判断密钥是否可用。
+  Future<void> _testConnection() async {
+    final String id = _secretIdCtrl.text.trim();
+    final String key = _secretKeyCtrl.text.trim();
+    if (id.isEmpty || key.isEmpty) {
+      setState(() {
+        _testOk = false;
+        _testResult = '先填好 SecretId 和 SecretKey 再测';
+      });
+      return;
+    }
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
+    final Dio dio = Dio();
+    try {
+      final String translated = await TencentTranslator(
+        secretId: id,
+        secretKey: key,
+      ).translate(
+        'Hello, sweetie.',
+        dio: dio,
+        timeout: const Duration(seconds: 12),
+      );
+      if (!mounted) return;
+      setState(() {
+        _testOk = true;
+        _testResult = '连接成功，译文：$translated';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _testOk = false;
+        _testResult = '连接失败：${_friendlyError(error)}';
+      });
+    } finally {
+      dio.close();
+      if (mounted) setState(() => _testing = false);
+    }
+  }
+
+  /// 把底层异常压成一句人话（超时/密钥错/配额尽是最常见的三类）。
+  String _friendlyError(Object error) {
+    final String raw = error.toString().replaceFirst('Exception: ', '');
+    if (raw.contains('SocketException') || raw.contains('TimeoutException')) {
+      return '网络不通或超时（检查手机网络或代理）';
+    }
+    if (raw.contains('AuthFailure') || raw.contains('UnauthorizedOperation')) {
+      return '密钥无效或无权限（检查 SecretId/SecretKey 与控制台开通状态）';
+    }
+    if (raw.contains('RequestLimitExceeded') || raw.contains('LimitExceeded')) {
+      return '请求超限（免费额度可能已用尽）';
+    }
+    return raw.length > 60 ? '${raw.substring(0, 60)}…' : raw;
+  }
 
   Future<void> _save() async {
     final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
@@ -154,7 +219,9 @@ class _TranslationSettingsSheetState
               ),
               const SizedBox(height: 12),
               _localOnlyNote(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              _testConnectionRow(),
+              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
@@ -268,6 +335,52 @@ class _TranslationSettingsSheetState
           ),
         ),
       ),
+    );
+  }
+
+  /// 「测试连接」按钮 + 结果文字（成功浅绿 / 失败浅红）。
+  Widget _testConnectionRow() {
+    final Color tone =
+        _testOk ? const Color(0xFF2E7D63) : const Color(0xFFB3544B);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _testing ? null : () => unawaited(_testConnection()),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: SweetieColors.pink,
+              side: BorderSide(
+                color: SweetieColors.pink.withValues(alpha: 0.45),
+                width: 1.2,
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: const RoundedRectangleBorder(
+                borderRadius: SweetieTheme.cardRadius,
+              ),
+            ),
+            icon: _testing
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.wifi_tethering_rounded, size: 18),
+            label: Text(_testing ? '测试中…' : '测试连接'),
+          ),
+        ),
+        if (_testResult != null) ...<Widget>[
+          const SizedBox(height: 8),
+          Text(
+            _testResult!,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: tone,
+            ),
+          ),
+        ],
+      ],
     );
   }
 
