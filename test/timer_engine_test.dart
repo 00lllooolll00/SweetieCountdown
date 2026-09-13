@@ -203,6 +203,111 @@ void main() {
     });
   });
 
+  group('常驻标签', () {
+    test('常驻后排在首位,其余保持历史顺序', () async {
+      final TagStore store = TagStore(
+        MemoryTagStorage(),
+        defaultTags: const <String>[],
+      );
+      await store.add('专注');
+      await store.add('学习');
+      await store.add('工作');
+      expect(store.tags, <String>['工作', '学习', '专注']);
+
+      await store.setPinned('专注', true);
+      expect(store.pinnedTags, <String>['专注']);
+      expect(store.isPinned('专注'), isTrue);
+      expect(store.tags, <String>['专注', '工作', '学习']);
+    });
+
+    test('常驻项忽略大小写去重;取消常驻后恢复原来的大小写与顺序', () async {
+      final TagStore store = TagStore(
+        MemoryTagStorage(),
+        defaultTags: const <String>[],
+      );
+      await store.add('Work');
+      await store.add('Rest');
+      await store.add('Study');
+
+      // 大小写不同算同一个标签:只常驻一条,历史里原本的那条被顶到最前
+      await store.setPinned('work', true);
+      expect(store.pinnedTags, <String>['work']);
+      expect(store.tags, <String>['work', 'Study', 'Rest']);
+
+      await store.setPinned('WORK', true); // 重复常驻不会多出一条
+      expect(store.pinnedTags, <String>['work']);
+
+      await store.setPinned('Work', false); // 换一种大小写也能取消
+      expect(store.isPinned('work'), isFalse);
+      expect(store.tags, <String>['Study', 'Rest', 'Work']);
+    });
+
+    test('还没创建过的标签也能先常驻,创建后依旧常驻', () async {
+      final TagStore store = TagStore(
+        MemoryTagStorage(),
+        defaultTags: const <String>[],
+      );
+      await store.setPinned('写论文', true);
+      expect(store.isPinned('写论文'), isTrue);
+      expect(store.tags, <String>['写论文']);
+
+      await store.add('健身');
+      await store.add('写论文');
+      expect(store.tags, <String>['写论文', '健身']);
+    });
+
+    test('删除标签会同时取消常驻', () async {
+      final TagStore store =
+          TagStore(MemoryTagStorage(), defaultTags: const <String>['专注']);
+      await store.setPinned('专注', true);
+      expect(store.tags, <String>['专注']);
+
+      await store.remove('专注');
+      expect(store.isPinned('专注'), isFalse);
+      expect(store.pinnedTags, isEmpty);
+      expect(store.tags, isEmpty);
+    });
+
+    test('maxTags 淘汰不会丢常驻项', () async {
+      final TagStore store = TagStore(
+        MemoryTagStorage(),
+        defaultTags: const <String>[],
+        maxTags: 3,
+      );
+      await store.add('a');
+      await store.add('b');
+      await store.add('c');
+      await store.setPinned('a', true); // 常驻最旧的一条(正常会被淘汰的那个)
+
+      await store.add('d');
+      expect(store.isPinned('a'), isTrue);
+      expect(store.tags, <String>['a', 'd', 'c', 'b']);
+    });
+
+    test('togglePinned 切换常驻并刷新 state', () async {
+      final TagStore store = TagStore(
+        MemoryTagStorage(),
+        defaultTags: const <String>[],
+      );
+      final ProviderContainer container = ProviderContainer(
+        overrides: <Override>[tagStoreProvider.overrideWithValue(store)],
+      );
+      addTearDown(container.dispose);
+      final TagHistoryNotifier notifier =
+          container.read(tagHistoryProvider.notifier);
+
+      await notifier.add('专注');
+      await notifier.add('学习');
+      expect(container.read(tagHistoryProvider), <String>['学习', '专注']);
+
+      await notifier.togglePinned('专注');
+      expect(container.read(tagHistoryProvider), <String>['专注', '学习']);
+
+      await notifier.togglePinned('专注');
+      expect(container.read(tagHistoryProvider), <String>['学习', '专注']);
+    });
+  });
+
   group('HiveTagStorage：真实沙箱往返', () {
     late Directory dir;
     late Box<dynamic> box;
@@ -234,6 +339,20 @@ void main() {
       expect(reopened.tags, <String>['写论文', '健身', '专注']);
       // 落盘的是字符串列表(后续版本读取的契约)
       expect(box.get(HiveTagStorage.storageKey), isA<List<dynamic>>());
+    });
+
+    test('常驻标签单独落盘,重开后仍排在最前', () async {
+      final TagStore first =
+          TagStore(HiveTagStorage(box), defaultTags: const ['专注']);
+      await first.add('写论文');
+      await first.add('健身');
+      await first.setPinned('写论文', true);
+
+      final TagStore reopened =
+          TagStore(HiveTagStorage(box), defaultTags: const ['专注']);
+      expect(reopened.isPinned('写论文'), isTrue);
+      expect(reopened.tags, <String>['写论文', '健身', '专注']);
+      expect(box.get(HiveTagStorage.pinnedStorageKey), isA<List<dynamic>>());
     });
   });
 

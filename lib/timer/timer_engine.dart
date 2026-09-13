@@ -152,6 +152,11 @@ abstract class TagStorage {
   List<String>? read();
 
   Future<void> write(List<String> tags);
+
+  /// 返回已保存的常驻标签;从未写入过时返回 null。
+  List<String>? readPinned();
+
+  Future<void> writePinned(List<String> tags);
 }
 
 /// 内存实现(单测 / 预览用)。
@@ -161,20 +166,34 @@ class MemoryTagStorage implements TagStorage {
 
   List<String>? _tags;
 
+  List<String>? _pinned;
+
   @override
   List<String>? read() => _tags == null ? null : List<String>.of(_tags!);
+
+  @override
+  List<String>? readPinned() =>
+      _pinned == null ? null : List<String>.of(_pinned!);
 
   @override
   Future<void> write(List<String> tags) async {
     _tags = List<String>.of(tags);
   }
+
+  @override
+  Future<void> writePinned(List<String> tags) async {
+    _pinned = List<String>.of(tags);
+  }
 }
 
-/// Hive 实现:整段标签历史存在单个 key 下(最近使用在前)。
+/// Hive 实现:整段标签历史存在单个 key 下(最近使用在前);常驻标签另存一个 key。
 class HiveTagStorage implements TagStorage {
   HiveTagStorage(this._box);
 
   static const String storageKey = 'tag_history';
+
+  /// 常驻标签的存储 key。
+  static const String pinnedStorageKey = 'pinned_tags';
 
   final Box<dynamic> _box;
 
@@ -186,7 +205,18 @@ class HiveTagStorage implements TagStorage {
   }
 
   @override
+  List<String>? readPinned() {
+    final raw = _box.get(pinnedStorageKey);
+    if (raw is! List) return null;
+    return raw.whereType<String>().toList();
+  }
+
+  @override
   Future<void> write(List<String> tags) => _box.put(storageKey, tags);
+
+  @override
+  Future<void> writePinned(List<String> tags) =>
+      _box.put(pinnedStorageKey, tags);
 }
 
 /// 标签历史:去重(忽略首尾空格与大小写)+ 最近使用在前。
@@ -202,13 +232,13 @@ class TagStore {
   /// 从未写入过时展示的默认标签。
   final List<String> defaultTags;
 
-  /// 历史长度上限,防止无限增长。
+  /// 历史长度上限,防止无限增长;常驻项不参与淘汰。
   final int maxTags;
 
-  /// 当前标签列表(不可变副本)。
-  List<String> get tags {
-    final stored = _storage.read();
-    if (stored == null) return List<String>.unmodifiable(defaultTags);
+  /// 常驻标签:永远排在 [tags] 最前,保持设置时的顺序,忽略大小写去重。
+  List<String> get pinnedTags {
+    final stored = _storage.readPinned();
+    if (stored == null) return const <String>[];
     final seen = <String>{};
     return List<String>.unmodifiable(
       stored.where(
@@ -217,23 +247,85 @@ class TagStore {
     );
   }
 
+  /// [name] 是否常驻(忽略大小写)。
+  bool isPinned(String name) {
+    final key = name.trim().toLowerCase();
+    return pinnedTags.any((tag) => tag.toLowerCase() == key);
+  }
+
+  /// 设置 / 取消常驻;标签还没创建过也可以先常驻。
+  Future<void> setPinned(String name, bool pinned) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final key = trimmed.toLowerCase();
+    final current = List<String>.of(pinnedTags);
+    final exists = current.any((tag) => tag.toLowerCase() == key);
+    if (pinned == exists) return;
+    if (pinned) {
+      current.add(trimmed);
+    } else {
+      current.removeWhere((tag) => tag.toLowerCase() == key);
+    }
+    await _storage.writePinned(current);
+  }
+
+  /// 当前标签列表(不可变副本):常驻在前,其余按最近使用在前。
+  List<String> get tags {
+    final seen = <String>{};
+    return List<String>.unmodifiable(<String>[
+      for (final tag in pinnedTags)
+        if (seen.add(tag.toLowerCase())) tag,
+      for (final tag in _storedTags)
+        if (seen.add(tag.toLowerCase())) tag,
+    ]);
+  }
+
+  /// 存储顺序的标签(从未写入过时是默认标签),已忽略大小写去重。
+  List<String> get _storedTags {
+    final stored = _storage.read() ?? defaultTags;
+    final seen = <String>{};
+    return <String>[
+      for (final tag in stored)
+        if (tag.trim().isNotEmpty && seen.add(tag.trim().toLowerCase())) tag,
+    ];
+  }
+
   /// 新增 / 置顶:同名(忽略大小写)标签去重后移到最前。
   Future<void> add(String raw) async {
     final name = raw.trim();
     if (name.isEmpty) return;
-    final rest = tags.where((tag) => tag.toLowerCase() != name.toLowerCase());
-    await _storage.write([name, ...rest].take(maxTags).toList());
+    final key = name.toLowerCase();
+    final rest = _storedTags.where((tag) => tag.toLowerCase() != key);
+    await _storage.write(_cappedKeepingPinned(<String>[name, ...rest]));
   }
 
+  /// 删除历史的同时清掉常驻状态。
   Future<void> remove(String name) async {
     final key = name.trim().toLowerCase();
+    if (isPinned(name)) {
+      await _storage.writePinned(
+        pinnedTags.where((tag) => tag.toLowerCase() != key).toList(),
+      );
+    }
     await _storage.write(
-      tags.where((tag) => tag.toLowerCase() != key).toList(),
+      _storedTags.where((tag) => tag.toLowerCase() != key).toList(),
     );
   }
 
   /// 清空后不会回落到默认标签(「已保存为空」与「从未写入」是两种状态)。
   Future<void> clear() => _storage.write(const <String>[]);
+
+  /// 截断到 [maxTags]:常驻项一定保留(结果可能因此略超上限),其余保持原顺序。
+  List<String> _cappedKeepingPinned(List<String> ordered) {
+    final pinnedKeys = <String>{for (final tag in pinnedTags) tag.toLowerCase()};
+    final kept = <String>[];
+    for (final tag in ordered) {
+      if (kept.length < maxTags || pinnedKeys.contains(tag.toLowerCase())) {
+        kept.add(tag);
+      }
+    }
+    return kept;
+  }
 }
 
 /// ---------------------------------------------------------------------------
@@ -273,6 +365,12 @@ class TagHistoryNotifier extends Notifier<List<String>> {
 
   Future<void> remove(String name) async {
     await _store.remove(name);
+    state = _store.tags;
+  }
+
+  /// 切换常驻:常驻标签永远排在历史最前。
+  Future<void> togglePinned(String tag) async {
+    await _store.setPinned(tag, !_store.isPinned(tag));
     state = _store.tags;
   }
 }

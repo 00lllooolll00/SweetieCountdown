@@ -236,6 +236,56 @@ class _TimerPageState extends ConsumerState<TimerPage>
     ref.read(selectedTagProvider.notifier).select(tag);
   }
 
+  /// 长按标签的底部操作菜单:常驻开关 + 删除。
+  ///
+  /// 常驻点了就生效(先落状态再关菜单,无二次确认);
+  /// 删除仍走原有的 [_confirmRemoveTag] 确认框,菜单先关再弹。
+  Future<void> _showTagActions(String tag) async {
+    final pinned = ref.read(tagStoreProvider).isPinned(tag);
+    final shouldRemove = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: SweetieColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(SweetieTheme.radius),
+        ),
+      ),
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(
+                Icons.push_pin_rounded,
+                color: SweetieColors.pink,
+              ),
+              title: Text(pinned ? '取消常驻' : '📌 常驻到标签栏'),
+              onTap: () {
+                unawaited(
+                  ref.read(tagHistoryProvider.notifier).togglePinned(tag),
+                );
+                Navigator.of(sheetContext).pop(false);
+              },
+            ),
+            ListTile(
+              leading: const Icon(
+                Icons.delete_outline_rounded,
+                color: SweetieColors.pink,
+              ),
+              title: const Text('删除标签'),
+              onTap: () => Navigator.of(sheetContext).pop(true),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (shouldRemove != true || !mounted) return;
+    await _confirmRemoveTag(tag);
+  }
+
   Future<void> _confirmRemoveTag(String tag) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -270,6 +320,9 @@ class _TimerPageState extends ConsumerState<TimerPage>
 
     final engine = ref.watch(timerEngineProvider);
     final tags = ref.watch(tagHistoryProvider);
+    // TagStore 不是 Listenable,watch 它拿不到更新:靠上面的 tagHistoryProvider
+    // 触发重建,这里同步读一次常驻状态即可(排序由存储层保证,UI 不排序)。
+    final tagStore = ref.read(tagStoreProvider);
     final selectedTag = ref.watch(selectedTagProvider);
     final status = engine.statusAt(DateTime.now());
     // 计时进行中/暂停中：左侧按钮变为「提前结束」（倒计时）/「结束」（正计时）。
@@ -337,9 +390,10 @@ class _TimerPageState extends ConsumerState<TimerPage>
                       return _TagChip(
                         label: tag,
                         active: tag == selectedTag,
+                        pinned: tagStore.isPinned(tag),
                         onTap: () =>
                             ref.read(selectedTagProvider.notifier).select(tag),
-                        onLongPress: () => _confirmRemoveTag(tag),
+                        onLongPress: () => _showTagActions(tag),
                       );
                     },
                   ),
@@ -564,12 +618,16 @@ class _TagChip extends StatelessWidget {
   const _TagChip({
     required this.label,
     required this.active,
+    required this.pinned,
     required this.onTap,
     required this.onLongPress,
   });
 
   final String label;
   final bool active;
+
+  /// 常驻标签:文字前带图钉,未选中时描边更实,方便一眼分辨。
+  final bool pinned;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
 
@@ -594,7 +652,8 @@ class _TagChip extends StatelessWidget {
           border: Border.all(
             color: active
                 ? SweetieColors.pink
-                : SweetieColors.pink.withValues(alpha: 0.16),
+                : SweetieColors.pink
+                    .withValues(alpha: pinned ? 0.45 : 0.16),
             width: 1.2,
           ),
           // 选中态:四周均匀扩散的柔粉光(offset 归零 → 不偏向底部,不会连成横线)。
@@ -606,13 +665,26 @@ class _TagChip extends StatelessWidget {
             ),
           ],
         ),
-        child: Text(
-          '# $label',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: active ? SweetieColors.white : SweetieColors.text,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (pinned) ...[
+              Icon(
+                Icons.push_pin_rounded,
+                size: 12,
+                color: active ? SweetieColors.white : SweetieColors.pink,
+              ),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              '# $label',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: active ? SweetieColors.white : SweetieColors.text,
+              ),
+            ),
+          ],
         ),
         ),
       ),
@@ -682,6 +754,8 @@ class _TagInputDialogState extends State<_TagInputDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      // 软键盘弹出压缩可用高度:内建滚动化,小屏也不会 BOTTOM OVERFLOWED。
+      scrollable: true,
       backgroundColor: SweetieColors.white,
       shape: const RoundedRectangleBorder(borderRadius: SweetieTheme.cardRadius),
       title: const Text('自定义标签', style: TextStyle(fontSize: 18)),
