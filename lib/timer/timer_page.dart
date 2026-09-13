@@ -337,6 +337,9 @@ class _TimerPageState extends ConsumerState<TimerPage>
 
     return Scaffold(
       backgroundColor: SweetieColors.background,
+      // 页面没有常驻输入框（输入都在独立 route 的弹窗里），
+      // 不让软键盘压缩本页：否则表盘+按钮组被挤到底部溢出（RenderFlex overflow）。
+      resizeToAvoidBottomInset: false,
       body: TweenAnimationBuilder<Color?>(
         // 状态色切换时平滑过渡粉/黄/绿，再交给极光背景着色。
         tween: ColorTween(end: accent),
