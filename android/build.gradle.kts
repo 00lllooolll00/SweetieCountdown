@@ -20,16 +20,24 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
-// 沙箱离线:pub 原生插件(如 package:jni)不钉 ndkVersion，AGP 默认索取 NDK 28(本地无完整包)。
-// 根脚本 classpath 没有 AGP 类型，用反射统一钉到沙箱 NDK 27；执行时机在 AGP 读值之前。
+// 沙箱离线:pub 原生插件(如 package:jni)默认索取 NDK 28 / build-tools 36 / cmake(本地均无完整包)。
+// 子工程脚本会覆盖普通 subprojects{} 赋值，必须 afterEvaluate(本回调注册早于 AGP，执行时脚本已跑完)。
 subprojects {
     pluginManager.withPlugin("com.android.library") {
-        extensions.findByName("android")?.let { ext ->
-            try {
-                ext.javaClass.getMethod("setNdkVersion", String::class.java)
-                    .invoke(ext, "27.0.12077973")
-            } catch (ignored: Exception) {
-                logger.warn("跳过 ${project.path} 的 NDK 钉定:${ignored.message}")
+        project.afterEvaluate {
+            extensions.findByName("android")?.let { ext ->
+                try {
+                    ext.javaClass.getMethod("setNdkVersion", String::class.java)
+                        .invoke(ext, "27.0.12077973")
+                    ext.javaClass.getMethod("setBuildToolsVersion", String::class.java)
+                        .invoke(ext, "34.0.0")
+                    val enb = ext.javaClass.getMethod("getExternalNativeBuild").invoke(ext)
+                    val cmake = enb.javaClass.getMethod("getCmake").invoke(enb)
+                    cmake.javaClass.getMethod("setVersion", String::class.java)
+                        .invoke(cmake, "4.4.3")
+                } catch (ignored: Exception) {
+                    logger.warn("跳过 ${project.path} 的离线钉定:${ignored.message}")
+                }
             }
         }
     }
