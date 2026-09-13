@@ -24,8 +24,14 @@ class TimerPage extends ConsumerStatefulWidget {
 }
 
 class _TimerPageState extends ConsumerState<TimerPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final Ticker _ticker;
+
+  /// 呼吸滚动：驱动整页氛围光缓慢漂移与脉动（与计时状态无关，常驻轻呼吸）。
+  late final AnimationController _breath = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 7200),
+  )..repeat(reverse: true);
 
   /// 帧计数:驱动环形进度与时间文本重绘。
   final ValueNotifier<int> _frames = ValueNotifier<int>(0);
@@ -44,6 +50,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
   void dispose() {
     _celebrateTimer?.cancel();
     _frames.dispose();
+    _breath.dispose();
     // Ticker.dispose() 断言「不能在活动状态被销毁」,先停再销毁。
     _ticker
       ..stop()
@@ -235,23 +242,30 @@ class _TimerPageState extends ConsumerState<TimerPage>
 
     return Scaffold(
       backgroundColor: SweetieColors.background,
-      body: AnimatedContainer(
-        duration: const Duration(milliseconds: 520),
+      body: TweenAnimationBuilder<Color?>(
+        // 状态色切换时平滑过渡粉/黄/绿。
+        tween: ColorTween(end: accent),
+        duration: const Duration(milliseconds: 560),
         curve: Curves.easeOut,
-        decoration: BoxDecoration(
-          gradient: RadialGradient(
-            center: const Alignment(0, -0.16),
-            radius: 1.15,
-            colors: <Color>[
-              accent.withValues(alpha: 0.16),
-              accent.withValues(alpha: 0.05),
-              SweetieColors.background,
-            ],
-            stops: const <double>[0.0, 0.5, 1.0],
-          ),
-        ),
-        child: SafeArea(
-        child: Stack(
+        builder: (context, tintColor, _) {
+          final Color tint = tintColor ?? accent;
+          return AnimatedBuilder(
+            animation: _breath,
+            builder: (context, __) {
+              // 背景 = 纯色底 + 分散粉色光斑,各自错相呼吸(缩放/漂移/明暗)。
+              // 不用整屏径向/线性渐变:那种"大渐变收尾"会在屏内留下一条弧状分界线。
+              return Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  const ColoredBox(color: SweetieColors.background),
+                  for (final _Blob b in _kBlobs)
+                    _BreathingBlob(
+                      blob: b,
+                      tint: tint,
+                      breathValue: _breath.value,
+                    ),
+                  SafeArea(
+                child: Stack(
           children: [
             Column(
               children: [
@@ -294,6 +308,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
                         _Dial(
                           engine: engine,
                           frames: _frames,
+                          breath: _breath,
                           tag: selectedTag,
                           onTapTime: _pickDuration,
                         ),
@@ -334,8 +349,13 @@ class _TimerPageState extends ConsumerState<TimerPage>
             ),
             if (_celebrating) const _CandyBurst(),
           ],
-        ),
-        ),
+                ),
+                  ),
+                ],
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -344,6 +364,80 @@ class _TimerPageState extends ConsumerState<TimerPage>
 // ---------------------------------------------------------------------------
 // 环形计时器
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 背景呼吸色块
+// ---------------------------------------------------------------------------
+
+/// 背景光斑:位置/尺寸/呼吸相位/色相偏移(0=跟随状态色, 1=焦糖黄, 2=薄荷绿)。
+class _Blob {
+  const _Blob(this.align, this.size, this.phase, this.hueShift);
+
+  final Alignment align;
+  final double size;
+  final double phase;
+  final int hueShift;
+
+  Color color(Color tint) => switch (hueShift) {
+        1 => SweetieColors.yellow,
+        2 => SweetieColors.green,
+        _ => tint,
+      };
+}
+
+/// 分散在整页的色块:各自错开相位,缓慢缩放/漂移/明暗变化 = 分散呼吸。
+const List<_Blob> _kBlobs = <_Blob>[
+  _Blob(Alignment(-0.88, -0.82), 340, 0.00, 0),
+  _Blob(Alignment(0.92, -0.58), 300, 0.33, 1),
+  _Blob(Alignment(-0.95, 0.08), 280, 0.66, 2),
+  _Blob(Alignment(0.82, 0.28), 360, 0.15, 0),
+  _Blob(Alignment(-0.52, 0.86), 320, 0.50, 1),
+  _Blob(Alignment(0.62, 0.96), 260, 0.83, 0),
+];
+
+class _BreathingBlob extends StatelessWidget {
+  const _BreathingBlob({
+    required this.blob,
+    required this.tint,
+    required this.breathValue,
+  });
+
+  final _Blob blob;
+  final Color tint;
+  final double breathValue;
+
+  @override
+  Widget build(BuildContext context) {
+    final double t =
+        Curves.easeInOutSine.transform((breathValue + blob.phase) % 1.0);
+    final Color c = blob.color(tint);
+    final double alpha = 0.05 + 0.09 * t;
+    return Align(
+      alignment: blob.align,
+      child: Transform.translate(
+        offset: Offset(0, -14 + 28 * t),
+        child: Transform.scale(
+          scale: 0.86 + 0.30 * t,
+          child: Container(
+            width: blob.size,
+            height: blob.size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: RadialGradient(
+                colors: <Color>[
+                  c.withValues(alpha: alpha),
+                  c.withValues(alpha: alpha * 0.55),
+                  c.withValues(alpha: 0.0),
+                ],
+                stops: const <double>[0.0, 0.5, 1.0],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 const double _dialSize = 264;
 
@@ -372,12 +466,16 @@ class _Dial extends StatelessWidget {
   const _Dial({
     required this.engine,
     required this.frames,
+    required this.breath,
     required this.tag,
     required this.onTapTime,
   });
 
   final TimerEngine engine;
   final Listenable frames;
+
+  /// 与整页氛围同频的呼吸进度(0..1),驱动光晕脉动。
+  final Animation<double> breath;
   final String? tag;
 
   /// 点按中央时间文本:倒计时未开始 / 刚结束时弹时长选择。
@@ -386,7 +484,7 @@ class _Dial extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: frames,
+      animation: Listenable.merge(<Listenable>[frames, breath]),
       builder: (context, _) {
         final now = DateTime.now();
         final status = engine.statusAt(now);
@@ -404,13 +502,16 @@ class _Dial extends StatelessWidget {
           child: Stack(
             alignment: Alignment.center,
             children: [
-              // 同色光晕：呼应上方标签粉，下接表盘，柔化过渡并统一背景。
+              // 同色光晕：与整页氛围同频呼吸，柔和过渡并统一背景。
               Container(
                 width: 292,
                 height: 292,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.07),
+                  color: accent.withValues(
+                    alpha: 0.05 +
+                        0.05 * Curves.easeInOutSine.transform(breath.value),
+                  ),
                 ),
               ),
               Container(
@@ -720,21 +821,14 @@ class _TagChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-          // 未选中不再投影：一排胶囊的底部阴影会在标签条下沿连成一条粉带（视觉割裂）。
-          // 改用极淡描边立边界，几何恒定、只插值颜色，过冲曲线下也不会产生负 blur。
+          // 阴影全部去掉:选中态的光晕会在胶囊底部向外扩展出一条粉带,
+          // 与相邻胶囊连成横线,是"割裂感"的根源。选中只靠实心粉+描边立层级。
           border: Border.all(
             color: active
                 ? SweetieColors.pink
                 : SweetieColors.pink.withValues(alpha: 0.16),
             width: 1.2,
           ),
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: SweetieColors.pink.withValues(alpha: active ? 0.30 : 0.0),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
         ),
         child: Text(
           '# $label',
