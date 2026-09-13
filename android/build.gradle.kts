@@ -21,23 +21,22 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 // 沙箱离线:pub 原生插件(如 package:jni)默认索取 NDK 28 / build-tools 36 / cmake(本地均无完整包)。
-// 子工程脚本会覆盖普通 subprojects{} 赋值，必须 afterEvaluate(本回调注册早于 AGP，执行时脚本已跑完)。
+// 子工程脚本会覆盖写入，必须 afterEvaluate;且必须无条件注册(注册顺序决定执行顺序，早于 AGP 回调)。
 subprojects {
-    pluginManager.withPlugin("com.android.library") {
-        project.afterEvaluate {
-            extensions.findByName("android")?.let { ext ->
-                try {
-                    ext.javaClass.getMethod("setNdkVersion", String::class.java)
-                        .invoke(ext, "27.0.12077973")
-                    ext.javaClass.getMethod("setBuildToolsVersion", String::class.java)
-                        .invoke(ext, "34.0.0")
-                    val enb = ext.javaClass.getMethod("getExternalNativeBuild").invoke(ext)
-                    val cmake = enb.javaClass.getMethod("getCmake").invoke(enb)
-                    cmake.javaClass.getMethod("setVersion", String::class.java)
-                        .invoke(cmake, "4.4.3")
-                } catch (ignored: Exception) {
-                    logger.warn("跳过 ${project.path} 的离线钉定:${ignored.message}")
-                }
+    afterEvaluate {
+        if (!pluginManager.hasPlugin("com.android.library")) return@afterEvaluate
+        extensions.findByName("android")?.let { ext ->
+            try {
+                ext.javaClass.getMethod("setNdkVersion", String::class.java)
+                    .invoke(ext, "27.0.12077973")
+                ext.javaClass.getMethod("setBuildToolsVersion", String::class.java)
+                    .invoke(ext, "34.0.0")
+                val enb = ext.javaClass.getMethod("getExternalNativeBuild").invoke(ext)
+                val cmake = enb.javaClass.getMethod("getCmake").invoke(enb)
+                cmake.javaClass.getMethod("setVersion", String::class.java)
+                    .invoke(cmake, "4.4.3")
+            } catch (ignored: Exception) {
+                logger.warn("跳过 ${project.path} 的离线钉定:${ignored.message}")
             }
         }
     }
