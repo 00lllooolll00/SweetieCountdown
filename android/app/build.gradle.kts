@@ -17,9 +17,11 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.sweetie.sweetie_countdown"
-    // 离线沙箱:用 @env/android-sdk 内拷贝包构建(最高 android-35/build-tools 34)，不用 NDK。
+    // 离线沙箱:@env/android-sdk 内拷贝包(最高 android-35/build-tools 34)，零下载。
+    // NDK 钉 27:沙箱内完整版本;28.2.13676358 为 Flutter 默认但本地无完整包，会触发 sdkmanager 远端安装 hanging。
     compileSdk = 35
     buildToolsVersion = "34.0.0"
+    ndkVersion = "27.0.12077973"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

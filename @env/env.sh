@@ -24,11 +24,7 @@ export TMP="$TMPDIR"
 export FLUTTER_STORAGE_BASE_URL="https://mirrors.cloud.tencent.com/flutter"
 export PUB_HOSTED_URL="https://mirrors.tuna.tsinghua.edu.cn/dart-pub"
 export FLUTTER_GIT_URL="https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git"
-# 宿主 Android SDK 只读复用（不写入 $HOME）
-if [ -z "${ANDROID_HOME:-}" ]; then
-  export ANDROID_HOME="$HOME/Android/Sdk"
-fi
-if [ -z "${ANDROID_SDK_ROOT:-}" ]; then
-  export ANDROID_SDK_ROOT="$ANDROID_HOME"
-fi
+# Android SDK 使用沙箱内 @env/android-sdk（平台/构建工具/NDK 均为本地拷贝，零远端、零宿主写入）
+export ANDROID_HOME="$SWEETIE_ROOT/@env/android-sdk"
+export ANDROID_SDK_ROOT="$SWEETIE_ROOT/@env/android-sdk"
 mkdir -p "$PUB_CACHE" "$GRADLE_USER_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$ANDROID_USER_HOME" "$TMPDIR"
