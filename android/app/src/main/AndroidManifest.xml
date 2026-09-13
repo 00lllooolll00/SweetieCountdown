@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="甜蜜倒数"
+        android:label="莓好倒数"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

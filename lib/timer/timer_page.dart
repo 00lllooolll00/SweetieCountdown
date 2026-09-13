@@ -226,15 +226,36 @@ class _TimerPageState extends ConsumerState<TimerPage>
     final tags = ref.watch(tagHistoryProvider);
     final selectedTag = ref.watch(selectedTagProvider);
     final status = engine.statusAt(DateTime.now());
+    // 整页氛围色：与表盘同源，让顶部模式切换/标签/表盘/按钮共享一个背景光。
+    final accent = switch (status) {
+      TimerStatus.finished => SweetieColors.green,
+      TimerStatus.paused => SweetieColors.yellow,
+      _ => SweetieColors.pink,
+    };
 
     return Scaffold(
       backgroundColor: SweetieColors.background,
-      body: SafeArea(
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 520),
+        curve: Curves.easeOut,
+        decoration: BoxDecoration(
+          gradient: RadialGradient(
+            center: const Alignment(0, -0.16),
+            radius: 1.15,
+            colors: <Color>[
+              accent.withValues(alpha: 0.16),
+              accent.withValues(alpha: 0.05),
+              SweetieColors.background,
+            ],
+            stops: const <double>[0.0, 0.5, 1.0],
+          ),
+        ),
+        child: SafeArea(
         child: Stack(
           children: [
             Column(
               children: [
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 _ModeToggle(
                   mode: engine.mode,
                   enabled:
@@ -242,7 +263,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
                   onChanged: (mode) =>
                       ref.read(timerEngineProvider.notifier).setMode(mode),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 SizedBox(
                   height: 48,
                   child: ListView.separated(
@@ -307,6 +328,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
             ),
             if (_celebrating) const _CandyBurst(),
           ],
+        ),
         ),
       ),
     );
@@ -378,19 +400,11 @@ class _Dial extends StatelessWidget {
             children: [
               // 同色光晕：呼应上方标签粉，下接表盘，柔化过渡并统一背景。
               Container(
-                width: 312,
-                height: 312,
+                width: 292,
+                height: 292,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.08),
-                ),
-              ),
-              Container(
-                width: 278,
-                height: 278,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withValues(alpha: 0.10),
+                  color: accent.withValues(alpha: 0.07),
                 ),
               ),
               Container(
@@ -700,9 +714,13 @@ class _TagChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-          boxShadow: SweetieTheme.buttonShadow(
-            active ? SweetieColors.pink : SweetieColors.green,
-          ),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: SweetieColors.pink.withValues(alpha: active ? 0.35 : 0.10),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: Text(
           '# $label',
@@ -730,21 +748,24 @@ class _AddTagChip extends StatelessWidget {
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 16),
         decoration: BoxDecoration(
-          color: SweetieColors.yellow.withValues(alpha: 0.24),
+          color: SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-          border: Border.all(color: SweetieColors.yellow, width: 1.6),
+          border: Border.all(
+            color: SweetieColors.pink.withValues(alpha: 0.32),
+            width: 1.4,
+          ),
         ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.add_rounded, size: 18, color: SweetieColors.text),
+            Icon(Icons.add_rounded, size: 18, color: SweetieColors.pink),
             SizedBox(width: 4),
             Text(
               '自定义',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
-                color: SweetieColors.text,
+                color: SweetieColors.pink,
               ),
             ),
           ],
@@ -840,7 +861,7 @@ class _ModeToggle extends StatelessWidget {
           decoration: BoxDecoration(
             color: SweetieColors.white,
             borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-            boxShadow: SweetieTheme.buttonShadow(SweetieColors.green),
+            boxShadow: SweetieTheme.cardShadow(SweetieColors.pink),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -906,7 +927,6 @@ class _RoundButtonState extends State<_RoundButton> {
   @override
   Widget build(BuildContext context) {
     final size = widget.primary ? 92.0 : 64.0;
-    final accent = widget.primary ? SweetieColors.pink : SweetieColors.green;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -925,7 +945,9 @@ class _RoundButtonState extends State<_RoundButton> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: widget.primary ? SweetieColors.pink : SweetieColors.white,
-                boxShadow: SweetieTheme.buttonShadow(accent),
+                boxShadow: widget.primary
+                    ? SweetieTheme.buttonShadow(SweetieColors.pink)
+                    : SweetieTheme.cardShadow(SweetieColors.pink),
               ),
               child: Icon(
                 widget.icon,
