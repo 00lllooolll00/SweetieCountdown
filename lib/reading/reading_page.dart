@@ -5,10 +5,25 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../theme/sweetie_theme.dart';
+import 'favorites_page.dart';
 import 'reading_service.dart';
 
 // 配色统一取全局主题（SweetieColors / SweetieTheme），本模块不再自带色值。
 const String _serif = 'serif';
+
+/// 来源色点：阅读页来源胶囊与收藏列表共用一套配色。
+Color readingSourceColor(ReadingSource source) {
+  switch (source) {
+    case ReadingSource.wiki:
+      return SweetieColors.green;
+    case ReadingSource.jamesClear:
+      return SweetieColors.yellow;
+    case ReadingSource.dailyGood:
+      return SweetieColors.pink;
+    case ReadingSource.builtIn:
+      return SweetieColors.textLight;
+  }
+}
 
 /// 每日一读：英文原文 + 中文柔和卡片。
 class ReadingPage extends ConsumerWidget {
@@ -89,6 +104,8 @@ class _Header extends StatelessWidget {
               ),
             ),
           ),
+          const Spacer(),
+          const FavoritesEntryButton(),
         ],
       ),
     );
@@ -109,6 +126,38 @@ class _FetchBar extends StatelessWidget {
         minHeight: 2.5,
         color: SweetieColors.pink,
         backgroundColor: SweetieColors.soft(SweetieColors.pink),
+      ),
+    );
+  }
+}
+
+/// 收藏列表点进来的只读阅读页：直接复用 [_ArticleView]，不重新抓取。
+class ArticleReaderPage extends StatelessWidget {
+  const ArticleReaderPage({super.key, required this.article});
+
+  final ReadingArticle article;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: SweetieColors.background,
+      appBar: AppBar(
+        backgroundColor: SweetieColors.background,
+        elevation: 0,
+        centerTitle: true,
+        title: Text(
+          article.source.label,
+          style: const TextStyle(
+            color: SweetieColors.text,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.8,
+          ),
+        ),
+      ),
+      body: SafeArea(
+        top: false,
+        child: _ArticleView(article: article),
       ),
     );
   }
@@ -181,19 +230,6 @@ class _SourceChip extends StatelessWidget {
 
   final ReadingArticle article;
 
-  Color get _dotColor {
-    switch (article.source) {
-      case ReadingSource.wiki:
-        return SweetieColors.green;
-      case ReadingSource.jamesClear:
-        return SweetieColors.yellow;
-      case ReadingSource.dailyGood:
-        return SweetieColors.pink;
-      case ReadingSource.builtIn:
-        return SweetieColors.textLight;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -211,7 +247,7 @@ class _SourceChip extends StatelessWidget {
                 width: 7,
                 height: 7,
                 decoration: BoxDecoration(
-                  color: _dotColor,
+                  color: readingSourceColor(article.source),
                   shape: BoxShape.circle,
                 ),
               ),
@@ -451,6 +487,7 @@ class _ActionBarState extends ConsumerState<_ActionBar> {
         await ref.read(readingServiceProvider).toggleFavorite(article);
     if (!mounted) return;
     setState(() => _favorite = nowFavorite);
+    ref.invalidate(favoritesProvider); // 顶部入口的收藏数量跟着变
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(nowFavorite ? '已收藏，随时回看' : '已取消收藏'),
@@ -461,11 +498,25 @@ class _ActionBarState extends ConsumerState<_ActionBar> {
     );
   }
 
+  /// 在收藏页里取消了收藏 → 当前这篇的心形也回到真实状态。
+  void _onFavoritesChanged(AsyncValue<List<ReadingArticle>>? previous,
+      AsyncValue<List<ReadingArticle>> next) {
+    final List<ReadingArticle>? list = next.asData?.value;
+    final String? id = _articleId;
+    if (list == null || id == null) return;
+    final bool nowFavorite = list.any((ReadingArticle a) => a.id == id);
+    if (nowFavorite != _favorite) setState(() => _favorite = nowFavorite);
+  }
+
   @override
   Widget build(BuildContext context) {
     final ReadingArticle? article =
         ref.watch(readingArticleProvider).asData?.value;
     if (article != null) _syncFavorite(article);
+    ref.listen<AsyncValue<List<ReadingArticle>>>(
+      favoritesProvider,
+      _onFavoritesChanged,
+    );
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),

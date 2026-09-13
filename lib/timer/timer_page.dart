@@ -147,6 +147,38 @@ class _TimerPageState extends ConsumerState<TimerPage>
     _syncTicker();
   }
 
+  /// 点表盘时间:倒计时未开始 / 刚结束时选新时长;进行中只提示,不改时长。
+  Future<void> _pickDuration() async {
+    final engine = ref.read(timerEngineProvider);
+    if (engine.mode != TimerMode.countdown) return;
+    final status = engine.statusAt(DateTime.now());
+    if (status == TimerStatus.running || status == TimerStatus.paused) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('计时进行中，先重置再调时长吧～'),
+          duration: Duration(milliseconds: 1400),
+        ),
+      );
+      return;
+    }
+
+    final picked = await showModalBottomSheet<Duration>(
+      context: context,
+      // 内容比 9/16 屏高,放开高度上限,避免小屏溢出。
+      isScrollControlled: true,
+      builder: (_) => _DurationSheet(initial: engine.total),
+    );
+    if (picked == null || !mounted) return;
+
+    final notifier = ref.read(timerEngineProvider.notifier);
+    // 结束后的引擎仍带 startedAt,setDuration 会按「进行中」拦下,先归零再改。
+    if (ref.read(timerEngineProvider).isActive) {
+      notifier.reset();
+      if (_celebrating) setState(() => _celebrating = false);
+    }
+    notifier.setDuration(picked);
+  }
+
   Future<void> _promptCustomTag() async {
     final input = await showDialog<String>(
       context: context,
@@ -239,6 +271,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
                       engine: engine,
                       frames: _frames,
                       tag: selectedTag,
+                      onTapTime: _pickDuration,
                     ),
                   ),
                 ),
@@ -308,11 +341,19 @@ String _statusLabel(TimerStatus status, TimerMode mode) {
 }
 
 class _Dial extends StatelessWidget {
-  const _Dial({required this.engine, required this.frames, required this.tag});
+  const _Dial({
+    required this.engine,
+    required this.frames,
+    required this.tag,
+    required this.onTapTime,
+  });
 
   final TimerEngine engine;
   final Listenable frames;
   final String? tag;
+
+  /// 点按中央时间文本:倒计时未开始 / 刚结束时弹时长选择。
+  final VoidCallback onTapTime;
 
   @override
   Widget build(BuildContext context) {
@@ -371,14 +412,21 @@ class _Dial extends StatelessWidget {
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    _formatClock(shown),
-                    style: const TextStyle(
-                      fontSize: 46,
-                      fontWeight: FontWeight.w800,
-                      color: SweetieColors.text,
-                      letterSpacing: 1.5,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: onTapTime,
+                    child: Semantics(
+                      button: true,
+                      child: Text(
+                        _formatClock(shown),
+                        style: const TextStyle(
+                          fontSize: 46,
+                          fontWeight: FontWeight.w800,
+                          color: SweetieColors.text,
+                          letterSpacing: 1.5,
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 6),
@@ -472,6 +520,154 @@ class _RingPainter extends CustomPainter {
   @override
   bool shouldRepaint(_RingPainter oldDelegate) =>
       oldDelegate.progress != progress || oldDelegate.color != color;
+}
+
+// ---------------------------------------------------------------------------
+// 时长选择
+// ---------------------------------------------------------------------------
+
+/// 倒计时时长选择:预设胶囊 + 滑杆(5~90 分钟,步进 5),确认后返回所选时长。
+class _DurationSheet extends StatefulWidget {
+  const _DurationSheet({required this.initial});
+
+  final Duration initial;
+
+  @override
+  State<_DurationSheet> createState() => _DurationSheetState();
+}
+
+class _DurationSheetState extends State<_DurationSheet> {
+  static const List<int> _presets = <int>[5, 10, 15, 25, 30, 45, 60];
+  static const int _minMinutes = 5;
+  static const int _maxMinutes = 90;
+  static const int _stepMinutes = 5;
+
+  /// 当前选择(分钟),始终落在 5 分钟步进上。
+  late double _minutes = _snap(widget.initial);
+
+  /// 初始时长吸附到步进并夹进区间,避免滑杆停在非法刻度上。
+  static double _snap(Duration duration) {
+    final rounded = (duration.inMinutes / _stepMinutes).round() * _stepMinutes;
+    return rounded.clamp(_minMinutes, _maxMinutes).toDouble();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = _minutes.round();
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              '倒计时时长',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '$minutes 分钟',
+              style: const TextStyle(
+                fontSize: 34,
+                fontWeight: FontWeight.w800,
+                color: SweetieColors.pink,
+                letterSpacing: 1,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final preset in _presets)
+                  _PresetChip(
+                    minutes: preset,
+                    active: minutes == preset,
+                    onTap: () => setState(() => _minutes = preset.toDouble()),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Slider(
+              value: _minutes,
+              min: _minMinutes.toDouble(),
+              max: _maxMinutes.toDouble(),
+              divisions: (_maxMinutes - _minMinutes) ~/ _stepMinutes,
+              label: '$minutes 分钟',
+              onChanged: (value) => setState(() => _minutes = value),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: const [
+                  Text('5 分钟', style: TextStyle(fontSize: 12, color: SweetieColors.textLight)),
+                  Text('90 分钟', style: TextStyle(fontSize: 12, color: SweetieColors.textLight)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: SweetieColors.pink,
+                  foregroundColor: SweetieColors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: SweetieTheme.cardRadius,
+                  ),
+                ),
+                onPressed: () =>
+                    Navigator.of(context).pop(Duration(minutes: minutes)),
+                child: const Text('确认'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PresetChip extends StatelessWidget {
+  const _PresetChip({
+    required this.minutes,
+    required this.active,
+    required this.onTap,
+  });
+
+  final int minutes;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: SweetieTheme.animationDuration,
+        curve: SweetieTheme.animationCurve,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: active ? SweetieColors.pink : SweetieColors.soft(SweetieColors.pink),
+          borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
+          boxShadow: active ? SweetieTheme.buttonShadow() : null,
+        ),
+        child: Text(
+          '$minutes 分钟',
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: active ? SweetieColors.white : SweetieColors.text,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
