@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432" fill="none">
+
+  <!-- 环形倒计时: 轨道 + 进度弧 (中心 216,216 / R121 / 描边26 / 进度78%) -->
+  <circle cx="216" cy="216" r="121" fill="none" stroke="#FFC9D0" stroke-width="26"/>
+  <path d="M216 95 A121 121 0 1 1 97.14 193.33" fill="none" stroke="#FF8595" stroke-width="26" stroke-linecap="round"/>
+  <!-- 进度头上的焦糖糖果珠 -->
+  <circle cx="97.14" cy="193.33" r="15" fill="#FFE082" stroke="#FFFDF9" stroke-width="6"/>
+
+  <!-- 草莓 / 糖果主体 -->
+  <path d="M216 158 C246 158 272 168 280 196 C288 226 274 268 232 300 Q216 310 200 300 C158 268 144 226 152 196 C160 168 186 158 216 158 Z" fill="#FF8595"/>
+  <!-- 糖体高光 -->
+  <ellipse cx="190" cy="196" rx="9" ry="22" fill="#FFFFFF" fill-opacity="0.32" transform="rotate(-28 190 196)"/>
+  <!-- 草莓籽 -->
+  <g fill="#FFE082">
+    <ellipse cx="216" cy="202" rx="6" ry="7.5"/>
+    <ellipse cx="186" cy="228" rx="6" ry="7.5"/>
+    <ellipse cx="246" cy="228" rx="6" ry="7.5"/>
+    <ellipse cx="216" cy="254" rx="6" ry="7.5"/>
+    <ellipse cx="190" cy="278" rx="5.5" ry="7"/>
+    <ellipse cx="242" cy="278" rx="5.5" ry="7"/>
+  </g>
+  <!-- 薄荷绿花萼: 三瓣, 圆角描边自带圆润尖端 (点缀) -->
+  <path d="M154 184 L150 138 L188 148 L216 118 L244 148 L282 138 L278 184 Q216 198 154 184 Z" fill="#A8E6CF" stroke="#A8E6CF" stroke-width="12" stroke-linejoin="round"/>
+</svg>
