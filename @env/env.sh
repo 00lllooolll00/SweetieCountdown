@@ -27,4 +27,5 @@ export FLUTTER_GIT_URL="https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git
 # Android SDK 使用沙箱内 @env/android-sdk（平台/构建工具/NDK 均为本地拷贝，零远端、零宿主写入）
 export ANDROID_HOME="$SWEETIE_ROOT/@env/android-sdk"
 export ANDROID_SDK_ROOT="$SWEETIE_ROOT/@env/android-sdk"
+export ANDROID_NDK_HOME="$SWEETIE_ROOT/@env/android-sdk/ndk/27.0.12077973"
 mkdir -p "$PUB_CACHE" "$GRADLE_USER_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$ANDROID_USER_HOME" "$TMPDIR"
