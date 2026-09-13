@@ -1,8 +1,10 @@
 name: Release APK
 
-# 发布 Release 时自动编译 debug APK 并上传到该 Release 的附件。
-# 说明：CI 无签名密钥，产物为 debug 签名包；正式上架请在本地配好
-# android/key.properties 后执行 flutter build apk --release。
+# 发布 Release 时自动编译 **签名版 release APK** 并上传到该 Release 的附件。
+#
+# 签名密钥不进仓库：以 base64 存在 GitHub Secrets（KEYSTORE_BASE64），
+# 构建前解码成 android/release.jks 并生成 key.properties。
+# 需要的 secrets：KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD / KEY_ALIAS。
 on:
   release:
     types: [published]
@@ -30,6 +32,24 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Decode keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: echo "$KEYSTORE_BASE64" | base64 -d > android/release.jks
+
+      - name: Write signing config
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          cat > android/key.properties <<EOF
+          storePassword=$KEYSTORE_PASSWORD
+          keyPassword=$KEY_PASSWORD
+          keyAlias=$KEY_ALIAS
+          storeFile=release.jks
+          EOF
+
       - name: Pub get
         run: flutter pub get
 
@@ -39,10 +59,18 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Build debug APK
-        run: flutter build apk --debug
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Verify signature is release (not debug)
+        run: |
+          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -n 1)
+          "$APKSIGNER" verify --print-certs build/app/outputs/flutter-apk/app-release.apk | head -n 2
 
       - name: Upload APK to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.ref_name }}" build/app/outputs/flutter-apk/app-debug.apk --clobber
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            build/app/outputs/flutter-apk/app-release.apk \
+            --clobber
