@@ -9,7 +9,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../stats/focus_record.dart';
 import '../stats/stats_logic.dart';
+import '../theme/aurora_background.dart';
 import '../theme/sweetie_theme.dart';
+import '../widgets/liquid_segmented_control.dart';
+import 'timer_dial.dart';
 import 'timer_engine.dart';
 
 /// 计时主页:环形计时器 + 标签胶囊 + 开始/暂停/重置。
@@ -17,7 +20,10 @@ import 'timer_engine.dart';
 /// 页面不做任何计时累减:运行期间由 [Ticker] 每帧读取「时间戳差值」重绘,
 /// 暂停 / 结束后立刻停帧,空闲时不占 CPU。
 class TimerPage extends ConsumerStatefulWidget {
-  const TimerPage({super.key});
+  const TimerPage({super.key, this.active = true});
+
+  /// 所在页签是否可见:不可见时暂停背景呼吸(省电)。计时逻辑不受影响。
+  final bool active;
 
   @override
   ConsumerState<TimerPage> createState() => _TimerPageState();
@@ -47,6 +53,19 @@ class _TimerPageState extends ConsumerState<TimerPage>
   }
 
   @override
+  void didUpdateWidget(TimerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 页签不可见即停呼吸，回到本页再续；计时 Ticker 不受影响。
+    if (oldWidget.active != widget.active) {
+      if (widget.active) {
+        _breath.repeat(reverse: true);
+      } else {
+        _breath.stop();
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _celebrateTimer?.cancel();
     _frames.dispose();
@@ -59,8 +78,11 @@ class _TimerPageState extends ConsumerState<TimerPage>
   }
 
   /// 只在「已开始且未暂停」时走帧;暂停/归零立即停。
+  /// 用 statusAt 而非 isTicking:倒计时到点后引擎仍 isActive,
+  /// 那种状态不该再驱动 Ticker(否则每帧重复判定 finished)。
   void _syncTicker() {
-    final ticking = ref.read(timerEngineProvider).isTicking;
+    final ticking = ref.read(timerEngineProvider).statusAt(DateTime.now()) ==
+        TimerStatus.running;
     if (ticking && !_ticker.isActive) {
       _ticker.start();
     } else if (!ticking && _ticker.isActive) {
@@ -122,7 +144,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
       case TimerStatus.paused:
         notifier.resume();
     }
-    if (_celebrating) setState(() => _celebrating = false);
+    _clearCelebration();
     _syncTicker();
   }
 
@@ -144,6 +166,12 @@ class _TimerPageState extends ConsumerState<TimerPage>
     }
   }
 
+  /// 庆祝收尾:取消定时器并复位标记,避免旧 Timer 稍后再触发一次无用 setState。
+  void _clearCelebration() {
+    _celebrateTimer?.cancel();
+    if (_celebrating) setState(() => _celebrating = false);
+  }
+
   /// 结束当前一轮:倒计时「提前结束」、正计时「结束」,都会把已用时长记进统计。
   void _onEndTap() {
     final engine = ref.read(timerEngineProvider);
@@ -151,7 +179,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
       unawaited(_recordElapsed(engine));
     }
     ref.read(timerEngineProvider.notifier).reset();
-    if (_celebrating) setState(() => _celebrating = false);
+    _clearCelebration();
     _syncTicker();
   }
 
@@ -161,7 +189,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
       unawaited(_recordElapsed(engine));
     }
     ref.read(timerEngineProvider.notifier).reset();
-    if (_celebrating) setState(() => _celebrating = false);
+    _clearCelebration();
     _syncTicker();
   }
 
@@ -192,7 +220,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
     // 结束后的引擎仍带 startedAt,setDuration 会按「进行中」拦下,先归零再改。
     if (ref.read(timerEngineProvider).isActive) {
       notifier.reset();
-      if (_celebrating) setState(() => _celebrating = false);
+      _clearCelebration();
     }
     notifier.setDuration(picked);
   }
@@ -257,39 +285,35 @@ class _TimerPageState extends ConsumerState<TimerPage>
     return Scaffold(
       backgroundColor: SweetieColors.background,
       body: TweenAnimationBuilder<Color?>(
-        // 状态色切换时平滑过渡粉/黄/绿。
+        // 状态色切换时平滑过渡粉/黄/绿，再交给极光背景着色。
         tween: ColorTween(end: accent),
         duration: const Duration(milliseconds: 560),
         curve: Curves.easeOut,
         builder: (context, tintColor, _) {
           final Color tint = tintColor ?? accent;
-          return AnimatedBuilder(
-            animation: _breath,
-            builder: (context, __) {
-              // 背景 = 纯色底 + 分散粉色光斑,各自错相呼吸(缩放/漂移/明暗)。
-              // 不用整屏径向/线性渐变:那种"大渐变收尾"会在屏内留下一条弧状分界线。
-              return Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  const ColoredBox(color: SweetieColors.background),
-                  for (final _Blob b in _kBlobs)
-                    _BreathingBlob(
-                      blob: b,
-                      tint: tint,
-                      breathValue: _breath.value,
-                    ),
-                  SafeArea(
-                child: Stack(
+          return AuroraBackground(
+            // 仅本页可见时呼吸；切到阅读/统计页即停，省电。
+            running: widget.active,
+            tint: tint,
+            child: SafeArea(
+              child: Stack(
           children: [
             Column(
               children: [
                 const SizedBox(height: 12),
-                _ModeToggle(
-                  mode: engine.mode,
+                LiquidSegmentedControl(
+                  segments: const <LiquidSegment>[
+                    LiquidSegment(label: '倒计时'),
+                    LiquidSegment(label: '正计时'),
+                  ],
+                  index: engine.mode == TimerMode.countdown ? 0 : 1,
+                  onChanged: (int i) => ref
+                      .read(timerEngineProvider.notifier)
+                      .setMode(i == 0 ? TimerMode.countdown : TimerMode.stopwatch),
                   enabled:
                       status == TimerStatus.idle || status == TimerStatus.finished,
-                  onChanged: (mode) =>
-                      ref.read(timerEngineProvider.notifier).setMode(mode),
+                  height: 44,
+                  borderColor: SweetieColors.pink.withValues(alpha: 0.16),
                 ),
                 const SizedBox(height: 12),
                 SizedBox(
@@ -325,7 +349,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        _Dial(
+                        TimerDial(
                           engine: engine,
                           frames: _frames,
                           breath: _breath,
@@ -375,328 +399,13 @@ class _TimerPageState extends ConsumerState<TimerPage>
             ),
             if (_celebrating) const _CandyBurst(),
           ],
-                ),
-                  ),
-                ],
-              );
-            },
+              ),
+            ),
           );
         },
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// 环形计时器
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 背景呼吸色块
-// ---------------------------------------------------------------------------
-
-/// 背景光斑:位置/尺寸/呼吸相位/色相偏移(0=跟随状态色, 1=焦糖黄, 2=薄荷绿)。
-class _Blob {
-  const _Blob(this.align, this.size, this.phase, this.hueShift);
-
-  final Alignment align;
-  final double size;
-  final double phase;
-  final int hueShift;
-
-  Color color(Color tint) => switch (hueShift) {
-        1 => SweetieColors.yellow,
-        2 => SweetieColors.green,
-        _ => tint,
-      };
-}
-
-/// 分散在整页的色块:各自错开相位,缓慢缩放/漂移/明暗变化 = 分散呼吸。
-const List<_Blob> _kBlobs = <_Blob>[
-  _Blob(Alignment(-0.88, -0.82), 340, 0.00, 0),
-  _Blob(Alignment(0.92, -0.58), 300, 0.33, 1),
-  _Blob(Alignment(-0.95, 0.08), 280, 0.66, 2),
-  _Blob(Alignment(0.82, 0.28), 360, 0.15, 0),
-  _Blob(Alignment(-0.52, 0.86), 320, 0.50, 1),
-  _Blob(Alignment(0.62, 0.96), 260, 0.83, 0),
-];
-
-class _BreathingBlob extends StatelessWidget {
-  const _BreathingBlob({
-    required this.blob,
-    required this.tint,
-    required this.breathValue,
-  });
-
-  final _Blob blob;
-  final Color tint;
-  final double breathValue;
-
-  @override
-  Widget build(BuildContext context) {
-    // 连续三角波(0→1→0→1...):递增到最大再递减到最小,循环往复;
-    // 直接用 (v+phase)%1 会在环绕处跳变,呼吸就不平滑了。
-    final double p = (breathValue + blob.phase) % 2.0;
-    final double tri = p <= 1.0 ? p : 2.0 - p;
-    final double t = Curves.easeInOutSine.transform(tri);
-    final Color c = blob.color(tint);
-    final double alpha = 0.05 + 0.09 * t;
-    return Align(
-      alignment: blob.align,
-      child: Transform.translate(
-        offset: Offset(0, -14 + 28 * t),
-        child: Transform.scale(
-          scale: 0.86 + 0.30 * t,
-          child: Container(
-            width: blob.size,
-            height: blob.size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: RadialGradient(
-                colors: <Color>[
-                  c.withValues(alpha: alpha),
-                  c.withValues(alpha: alpha * 0.55),
-                  c.withValues(alpha: 0.0),
-                ],
-                stops: const <double>[0.0, 0.5, 1.0],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-const double _dialSize = 264;
-
-String _formatClock(Duration duration) {
-  final d = duration.isNegative ? Duration.zero : duration;
-  final hours = d.inHours;
-  final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-  final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-  return hours > 0 ? '${hours.toString().padLeft(2, '0')}:$minutes:$seconds' : '$minutes:$seconds';
-}
-
-String _statusLabel(TimerStatus status, TimerMode mode) {
-  switch (status) {
-    case TimerStatus.idle:
-      return mode == TimerMode.countdown ? '准备开始' : '随时开始';
-    case TimerStatus.running:
-      return mode == TimerMode.countdown ? '专注中…' : '计时中…';
-    case TimerStatus.paused:
-      return '已暂停';
-    case TimerStatus.finished:
-      return '完成啦';
-  }
-}
-
-class _Dial extends StatelessWidget {
-  const _Dial({
-    required this.engine,
-    required this.frames,
-    required this.breath,
-    required this.tag,
-    required this.onTapTime,
-  });
-
-  final TimerEngine engine;
-  final Listenable frames;
-
-  /// 与整页氛围同频的呼吸进度(0..1),驱动光晕脉动。
-  final Animation<double> breath;
-  final String? tag;
-
-  /// 点按中央时间文本:倒计时未开始 / 刚结束时弹时长选择。
-  final VoidCallback onTapTime;
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[frames, breath]),
-      builder: (context, _) {
-        final now = DateTime.now();
-        final status = engine.statusAt(now);
-        final shown = engine.mode == TimerMode.countdown
-            ? engine.remainingAt(now)
-            : engine.elapsedAt(now);
-        final accent = switch (status) {
-          TimerStatus.finished => SweetieColors.green,
-          TimerStatus.paused => SweetieColors.yellow,
-          _ => SweetieColors.pink,
-        };
-
-        return SizedBox.square(
-          dimension: _dialSize,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // 同色光晕：与整页氛围同频呼吸，柔和过渡并统一背景。
-              Container(
-                width: 292,
-                height: 292,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: accent.withValues(
-                    alpha: 0.05 +
-                        0.05 * Curves.easeInOutSine.transform(breath.value),
-                  ),
-                ),
-              ),
-              Container(
-                width: 226,
-                height: 226,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  // 糖感:中心纯白,向边缘晕一层极淡状态色,比死白更"软"。
-                  gradient: RadialGradient(
-                    colors: <Color>[
-                      SweetieColors.white,
-                      Color.alphaBlend(
-                        accent.withValues(alpha: 0.06),
-                        SweetieColors.white,
-                      ),
-                    ],
-                    stops: const <double>[0.55, 1.0],
-                  ),
-                  boxShadow: SweetieTheme.cardShadow(accent),
-                ),
-              ),
-              CustomPaint(
-                size: const Size.square(_dialSize),
-                painter: _RingPainter(
-                  progress: engine.mode == TimerMode.countdown
-                      // 倒计时:环从全满向空递减(剩余比例)。
-                      // 引擎给的是"已用比例"(递增),此处取反;正计时保持每分钟一圈递增。
-                      ? 1.0 - engine.progressAt(now)
-                      : engine.progressAt(now),
-                  color: accent,
-                ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: onTapTime,
-                    child: Semantics(
-                      button: true,
-                      child: Text(
-                        _formatClock(shown),
-                        style: const TextStyle(
-                          fontSize: 46,
-                          fontWeight: FontWeight.w800,
-                          color: SweetieColors.text,
-                          letterSpacing: 1.5,
-                          fontFeatures: [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _statusLabel(status, engine.mode),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: accent,
-                    ),
-                  ),
-                  if (tag != null) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: SweetieColors.pink.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-                      ),
-                      child: Text(
-                        '# $tag',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: SweetieColors.pink,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _RingPainter extends CustomPainter {
-  const _RingPainter({required this.progress, required this.color});
-
-  final double progress;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final stroke = size.shortestSide * 0.07;
-    final center = size.center(Offset.zero);
-    final radius = (size.shortestSide - stroke) / 2;
-    final rect = Rect.fromCircle(center: center, radius: radius);
-
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..color = color.withValues(alpha: 0.20)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16),
-    );
-    canvas.drawCircle(
-      center,
-      radius,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round
-        ..color = color.withValues(alpha: 0.14),
-    );
-
-    final clamped = progress.clamp(0.0, 1.0);
-    if (clamped <= 0) return;
-    canvas.drawArc(
-      rect,
-      -math.pi / 2,
-      math.pi * 2 * clamped,
-      false,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke
-        ..strokeCap = StrokeCap.round
-        ..shader = SweepGradient(
-          colors: <Color>[color, SweetieColors.yellow],
-          transform: const GradientRotation(-math.pi / 2),
-        ).createShader(rect),
-    );
-
-    // 弧头糖果珠:跟着进度走,白边 + 焦糖心,给表盘一个"可读的端点"。
-    final double head = -math.pi / 2 + math.pi * 2 * clamped;
-    final Offset tip = Offset(
-      center.dx + math.cos(head) * radius,
-      center.dy + math.sin(head) * radius,
-    );
-    canvas.drawCircle(tip, stroke * 0.62, Paint()..color = SweetieColors.white);
-    canvas.drawCircle(
-      tip,
-      stroke * 0.40,
-      Paint()..color = SweetieColors.yellow,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_RingPainter oldDelegate) =>
-      oldDelegate.progress != progress || oldDelegate.color != color;
 }
 
 // ---------------------------------------------------------------------------
@@ -869,7 +578,12 @@ class _TagChip extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
-      child: AnimatedContainer(
+      // 选中瞬间轻微放大回弹(果冻感):scale 不参与阴影插值,过冲曲线安全。
+      child: AnimatedScale(
+        scale: active ? 1.05 : 1.0,
+        duration: SweetieTheme.animationDuration,
+        curve: SweetieTheme.animationCurve,
+        child: AnimatedContainer(
         duration: SweetieTheme.animationDuration,
         curve: SweetieTheme.animationCurve,
         alignment: Alignment.center,
@@ -899,6 +613,7 @@ class _TagChip extends StatelessWidget {
             fontWeight: FontWeight.w700,
             color: active ? SweetieColors.white : SweetieColors.text,
           ),
+        ),
         ),
       ),
     );
@@ -1006,72 +721,8 @@ class _TagInputDialogState extends State<_TagInputDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// 模式切换与按钮
+// 控制按钮
 // ---------------------------------------------------------------------------
-
-class _ModeToggle extends StatelessWidget {
-  const _ModeToggle({
-    required this.mode,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  final TimerMode mode;
-  final bool enabled;
-  final ValueChanged<TimerMode> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Opacity(
-      opacity: enabled ? 1 : 0.45,
-      child: IgnorePointer(
-        ignoring: !enabled,
-        child: Container(
-          padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(
-            color: SweetieColors.white,
-            borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-            border: Border.all(
-              color: SweetieColors.pink.withValues(alpha: 0.16),
-              width: 1.2,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _segment('倒计时', TimerMode.countdown),
-              _segment('正计时', TimerMode.stopwatch),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _segment(String label, TimerMode value) {
-    final active = mode == value;
-    return GestureDetector(
-      onTap: () => onChanged(value),
-      child: AnimatedContainer(
-        duration: SweetieTheme.animationDuration,
-        curve: SweetieTheme.animationCurve,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? SweetieColors.pink : Colors.transparent,
-          borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: active ? SweetieColors.white : SweetieColors.textLight,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 class _RoundButton extends StatefulWidget {
   const _RoundButton({

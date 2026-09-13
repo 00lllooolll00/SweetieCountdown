@@ -10,6 +10,7 @@ import 'package:sweetie_countdown/stats/stats_page.dart';
 import 'package:sweetie_countdown/theme/sweetie_theme.dart';
 import 'package:sweetie_countdown/timer/timer_engine.dart';
 import 'package:sweetie_countdown/timer/timer_page.dart';
+import 'package:sweetie_countdown/widgets/liquid_segmented_control.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -72,7 +73,12 @@ class _SweetieHomeShellState extends State<SweetieHomeShell> {
     return Scaffold(
       body: IndexedStack(
         index: _index,
-        children: const <Widget>[TimerPage(), ReadingPage(), StatsPage()],
+        children: <Widget>[
+          // 只给专注页传可见性：不可见时暂停背景呼吸（省电），计时逻辑不受影响。
+          TimerPage(active: _index == 0),
+          const ReadingPage(),
+          const StatsPage(),
+        ],
       ),
       bottomNavigationBar: _MacaronNavBar(
         items: _items,
@@ -107,88 +113,28 @@ class _MacaronNavBar extends StatelessWidget {
     return SafeArea(
       top: false,
       minimum: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      child: DecoratedBox(
+        // 阴影由外层提供:组件本体只负责"滑块 + 内容"。
         decoration: BoxDecoration(
-          color: SweetieColors.white,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
           boxShadow: SweetieTheme.cardShadow(),
         ),
-        child: Row(
-          children: <Widget>[
-            for (int i = 0; i < items.length; i++)
-              Expanded(
-                child: _NavCapsule(
-                  item: items[i],
-                  selected: i == currentIndex,
-                  onTap: () => onTap(i),
-                ),
-              ),
+        child: LiquidSegmentedControl(
+          segments: <LiquidSegment>[
+            for (final _NavItem it in items)
+              LiquidSegment(label: it.label, icon: it.icon),
           ],
+          index: currentIndex,
+          onChanged: onTap,
+          // 滑块随选中项换色(粉/黄/绿),保留马卡龙三色语言。
+          activeColor: items[currentIndex].color,
+          expand: true,
+          // 未选中只留图标,选中才展开文字(与旧导航一致)。
+          selectedShowLabel: false,
+          height: 52,
         ),
       ),
     );
   }
 }
 
-class _NavCapsule extends StatelessWidget {
-  const _NavCapsule({
-    required this.item,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _NavItem item;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: item.label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 14),
-          decoration: BoxDecoration(
-            color: selected ? item.color : Colors.transparent,
-            borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
-            boxShadow: selected ? SweetieTheme.buttonShadow(item.color) : const <BoxShadow>[],
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: <Widget>[
-              Icon(
-                item.icon,
-                size: 20,
-                color: selected ? SweetieColors.white : SweetieColors.textLight,
-              ),
-              AnimatedSize(
-                duration: const Duration(milliseconds: 260),
-                curve: Curves.easeOutBack,
-                child: selected
-                    ? Padding(
-                        padding: const EdgeInsets.only(left: 6),
-                        child: Text(
-                          item.label,
-                          style: const TextStyle(
-                            color: SweetieColors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      )
-                    : const SizedBox.shrink(),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
