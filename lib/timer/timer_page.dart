@@ -212,7 +212,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
                 ),
                 const SizedBox(height: 16),
                 SizedBox(
-                  height: 42,
+                  height: 48,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
                     padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -335,6 +335,23 @@ class _Dial extends StatelessWidget {
           child: Stack(
             alignment: Alignment.center,
             children: [
+              // 同色光晕：呼应上方标签粉，下接表盘，柔化过渡并统一背景。
+              Container(
+                width: 312,
+                height: 312,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent.withValues(alpha: 0.08),
+                ),
+              ),
+              Container(
+                width: 278,
+                height: 278,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent.withValues(alpha: 0.10),
+                ),
+              ),
               Container(
                 width: 226,
                 height: 226,
@@ -623,7 +640,7 @@ class _ModeToggle extends StatelessWidget {
       child: IgnorePointer(
         ignoring: !enabled,
         child: Container(
-          padding: const EdgeInsets.all(4),
+          padding: const EdgeInsets.all(6),
           decoration: BoxDecoration(
             color: SweetieColors.white,
             borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
@@ -648,7 +665,7 @@ class _ModeToggle extends StatelessWidget {
       child: AnimatedContainer(
         duration: SweetieTheme.animationDuration,
         curve: SweetieTheme.animationCurve,
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         decoration: BoxDecoration(
           color: active ? SweetieColors.pink : Colors.transparent,
           borderRadius: BorderRadius.circular(SweetieTheme.pillRadius),
