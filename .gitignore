@@ -27,3 +27,4 @@ env/.pub_cache/
 *.hive
 android/local.properties
 android/.gradle/
+assets/secrets.json

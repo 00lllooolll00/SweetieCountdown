@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'tencent_translate.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -466,6 +467,13 @@ class ReadingService {
   final Dio _dio;
   final Future<String> Function(String text)? _translate;
   final Duration _httpTimeout;
+
+  /// 可选密钥文件（不进仓库）:{"tencentSecretId":"...","tencentSecretKey":"..."}
+  static const String _secretsAsset = 'assets/secrets.json';
+
+  /// 腾讯云客户端惰性解析结果;[_tencentResolved] 保证只读一次资源。
+  TencentTranslator? _tencentClientCache;
+  bool _tencentResolved = false;
   final Random _random;
   final Map<String, String> _memoryCache = <String, String>{};
   final Map<String, String> _memoryFavorites = <String, String>{};
@@ -647,16 +655,46 @@ class ReadingService {
     return translated.join('\n\n');
   }
 
-  /// 翻译单块:测试注入优先 → MyMemory(稳定) → Google(海外/带代理时可用)。
-  /// 两路都失败时把异常抛给上层,由 [_localize] 降级为「保留英文 + 提示」。
+  /// 翻译单块:测试注入优先 → 腾讯云(配了密钥,500 万字符/月) → MyMemory → Google。
+  /// 全失败时把异常抛给上层,由 [_localize] 降级为「保留英文 + 提示」。
   Future<String> _translateText(String text) async {
     final Future<String> Function(String)? injected = _translate;
     if (injected != null) return injected(text);
+    final TencentTranslator? tencent = await _tencentClient();
+    if (tencent != null) {
+      try {
+        return await tencent.translate(text, dio: _dio, timeout: _httpTimeout);
+      } catch (_) {
+        // 配额用尽 / 密钥失效 / 网络异常:继续走免费链,不让整篇翻译失败。
+      }
+    }
     try {
       return await _translateByMyMemory(text);
     } catch (_) {
-      return _translateByGoogle(text);
+      return await _translateByGoogle(text);
     }
+  }
+
+  /// 读取可选的腾讯云密钥（`assets/secrets.json`，已 gitignore）。
+  /// 没配 / 读不到 / 字段为空 → 返回 null，翻译自动走免费链。
+  Future<TencentTranslator?> _tencentClient() async {
+    if (_tencentResolved) return _tencentClientCache;
+    _tencentResolved = true;
+    try {
+      final String raw = await rootBundle.loadString(_secretsAsset);
+      final Object? decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final String id = (decoded['tencentSecretId'] ?? '').toString().trim();
+        final String key =
+            (decoded['tencentSecretKey'] ?? '').toString().trim();
+        if (id.isNotEmpty && key.isNotEmpty) {
+          _tencentClientCache = TencentTranslator(secretId: id, secretKey: key);
+        }
+      }
+    } catch (_) {
+      // 资源缺失(未配置密钥)是最常见情况:静默走免费链。
+    }
+    return _tencentClientCache;
   }
 
   /// Google 免费端点(首选):响应形如 [[["译文","原文",...],...],...]。
