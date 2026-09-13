@@ -24,11 +24,11 @@ export TMP="$TMPDIR"
 export FLUTTER_STORAGE_BASE_URL="https://mirrors.cloud.tencent.com/flutter"
 export PUB_HOSTED_URL="https://mirrors.tuna.tsinghua.edu.cn/dart-pub"
 export FLUTTER_GIT_URL="https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git"
-# 宿主 Android SDK 只读复用（不写入 $HOME）
-if [ -z "${ANDROID_HOME:-}" ]; then
-  export ANDROID_HOME="$HOME/Android/Sdk"
-fi
-if [ -z "${ANDROID_SDK_ROOT:-}" ]; then
-  export ANDROID_SDK_ROOT="$ANDROID_HOME"
-fi
+# Android SDK 使用沙箱内 @env/android-sdk（零远端、零宿主写入），布局来源：
+# - platforms/android-34,35 + build-tools/34.0.0 + platform-tools + licenses：宿主 SDK 拷贝
+# - build-tools/36.0.0：34.0.0 复制改 revision 伪装（AGP 9.1 默认索取 36，远端不可达；aapt2 向后兼容可用）
+# - ndk/27.0.12077973：宿主拷贝完整版（宿主 28 为空目录会触发 sdkmanager 重装 hanging）
+# - cmake/4.4.3：bin 跳板 symlink 系统 cmake/ninja（与用宿主 JDK 同性质）；AGP 要的版本由 android/build.gradle.kts 统一钉
+export ANDROID_HOME="$SWEETIE_ROOT/@env/android-sdk"
+export ANDROID_SDK_ROOT="$SWEETIE_ROOT/@env/android-sdk"
 mkdir -p "$PUB_CACHE" "$GRADLE_USER_HOME" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME" "$ANDROID_USER_HOME" "$TMPDIR"
