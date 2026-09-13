@@ -16,8 +16,8 @@ const Color _kCoral = Color(0xFFFFB3A7);
 /// 正计时环的自转周期:9 秒整一圈(8~10 秒区间取中)。
 const int _kSpinPeriodMs = 9000;
 
-/// 正计时扇弧占整圈的比例(留白让"环头巡游"有读秒感)。
-const double _kSweepRatio = 0.78;
+/// 正计时环占整圈的比例:整圈闭合 —— 正计时没有终点,不留缺口。
+const double _kSweepRatio = 1.0;
 
 String _formatClock(Duration duration) {
   final d = duration.isNegative ? Duration.zero : duration;
@@ -289,7 +289,7 @@ class _TimerDialState extends State<TimerDial>
 // 画笔
 // ---------------------------------------------------------------------------
 
-/// 进度环:倒计时画「剩余比例」渐隐弧,正计时画 78% 定长弧 + 自转。
+/// 进度环:倒计时画「剩余比例」渐隐弧,正计时画整圈渐变环 + 匀速自转。
 class _RingPainter extends CustomPainter {
   const _RingPainter({
     required this.progress,
@@ -341,11 +341,12 @@ class _RingPainter extends CustomPainter {
     } else {
       start = -math.pi / 2 + angle;
       sweep = math.pi * 2 * _kSweepRatio;
-      // 蜜桃粉 → 奶黄 → 薄荷绿,跟随自转一起转。
+      // 蜜桃粉 → 奶黄 → 薄荷绿 → 回到蜜桃粉:整圈闭合无接缝,跟随自转一起流转。
       colors = const <Color>[
         SweetieColors.pink,
         SweetieColors.yellow,
         SweetieColors.green,
+        SweetieColors.pink,
       ];
       bead = SweetieColors.green;
     }
