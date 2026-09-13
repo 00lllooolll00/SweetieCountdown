@@ -212,7 +212,7 @@ class _TimerPageState extends ConsumerState<TimerPage>
       context: context,
       // 内容比 9/16 屏高,放开高度上限,避免小屏溢出。
       isScrollControlled: true,
-      builder: (_) => _DurationSheet(initial: engine.total),
+      builder: (_) => _DurationWheelSheet(initial: engine.total),
     );
     if (picked == null || !mounted) return;
 
@@ -479,87 +479,117 @@ class _TimerPageState extends ConsumerState<TimerPage>
 // 时长选择
 // ---------------------------------------------------------------------------
 
-/// 倒计时时长选择:预设胶囊 + 滑杆(5~90 分钟,步进 5),确认后返回所选时长。
-class _DurationSheet extends StatefulWidget {
-  const _DurationSheet({required this.initial});
+/// 甜系滚轮时长面板:时/分/秒 三列滚轮 + 快捷预设胶囊。
+///
+/// 用 [ListWheelScrollView] 而非 CupertinoPicker:选中粉底条、上下虚化遮罩、
+/// 单位小字都要按马卡龙视觉定制,内建组件改不动这些。
+/// 每一格跨过刻度都会给一次 [HapticFeedback.selectionClick] 轻反馈。
+class _DurationWheelSheet extends StatefulWidget {
+  const _DurationWheelSheet({required this.initial});
 
   final Duration initial;
 
   @override
-  State<_DurationSheet> createState() => _DurationSheetState();
+  State<_DurationWheelSheet> createState() => _DurationWheelSheetState();
 }
 
-class _DurationSheetState extends State<_DurationSheet> {
-  static const List<int> _presets = <int>[5, 10, 15, 25, 30, 45, 60];
-  static const int _minMinutes = 5;
-  static const int _maxMinutes = 90;
-  static const int _stepMinutes = 5;
+class _DurationWheelSheetState extends State<_DurationWheelSheet> {
+  /// 单项高度:44 是"看得清、滚得动、按得准"的甜点值。
+  static const double _itemExtent = 44;
 
-  /// 当前选择(分钟),始终落在 5 分钟步进上。
-  late double _minutes = _snap(widget.initial);
+  /// 最长 23 小时 59 分 59 秒。
+  static const int _maxHours = 23;
 
-  /// 初始时长吸附到步进并夹进区间,避免滑杆停在非法刻度上。
-  static double _snap(Duration duration) {
-    final rounded = (duration.inMinutes / _stepMinutes).round() * _stepMinutes;
-    return rounded.clamp(_minMinutes, _maxMinutes).toDouble();
+  static const List<(String, Duration)> _quickPresets = <(String, Duration)>[
+    ('15 分钟 · 偷闲', Duration(minutes: 15)),
+    ('25 分钟 · 番茄', Duration(minutes: 25)),
+    ('45 分钟 · 深度', Duration(minutes: 45)),
+  ];
+
+  late int _hours = widget.initial.inHours.clamp(0, _maxHours);
+  late int _minutes = widget.initial.inMinutes % 60;
+  late int _seconds = widget.initial.inSeconds % 60;
+
+  late final FixedExtentScrollController _hourCtrl =
+      FixedExtentScrollController(initialItem: _hours);
+  late final FixedExtentScrollController _minuteCtrl =
+      FixedExtentScrollController(initialItem: _minutes);
+  late final FixedExtentScrollController _secondCtrl =
+      FixedExtentScrollController(initialItem: _seconds);
+
+  @override
+  void dispose() {
+    _hourCtrl.dispose();
+    _minuteCtrl.dispose();
+    _secondCtrl.dispose();
+    super.dispose();
+  }
+
+  Duration get _picked =>
+      Duration(hours: _hours, minutes: _minutes, seconds: _seconds);
+
+  /// 全零不允许确认:0 秒的倒计时没有意义。
+  bool get _isZero => _picked == Duration.zero;
+
+  Future<void> _jumpTo(Duration target) async {
+    final int h = target.inHours.clamp(0, _maxHours);
+    final int m = target.inMinutes % 60;
+    final int sec = target.inSeconds % 60;
+    setState(() {
+      _hours = h;
+      _minutes = m;
+      _seconds = sec;
+    });
+    const Duration glide = Duration(milliseconds: 420);
+    const Curve curve = Curves.easeOutCubic;
+    unawaited(_hourCtrl.animateToItem(h, duration: glide, curve: curve));
+    unawaited(_minuteCtrl.animateToItem(m, duration: glide, curve: curve));
+    unawaited(_secondCtrl.animateToItem(sec, duration: glide, curve: curve));
   }
 
   @override
   Widget build(BuildContext context) {
-    final minutes = _minutes.round();
+    final Duration picked = _picked;
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: [
+          children: <Widget>[
             const Text(
               '倒计时时长',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             Text(
-              '$minutes 分钟',
+              '${picked.inHours.toString().padLeft(2, '0')} : '
+              '${(picked.inMinutes % 60).toString().padLeft(2, '0')} : '
+              '${(picked.inSeconds % 60).toString().padLeft(2, '0')}',
               style: const TextStyle(
-                fontSize: 34,
+                fontSize: 30,
                 fontWeight: FontWeight.w800,
                 color: SweetieColors.pink,
-                letterSpacing: 1,
+                letterSpacing: 2,
+                fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
               ),
             ),
+            const SizedBox(height: 10),
+            _wheels(),
             const SizedBox(height: 14),
             Wrap(
               spacing: 10,
               runSpacing: 10,
               alignment: WrapAlignment.center,
-              children: [
-                for (final preset in _presets)
+              children: <Widget>[
+                for (final (String label, Duration value) in _quickPresets)
                   _PresetChip(
-                    minutes: preset,
-                    active: minutes == preset,
-                    onTap: () => setState(() => _minutes = preset.toDouble()),
+                    minutes: value.inMinutes,
+                    label: label,
+                    active: _matches(value),
+                    onTap: () => unawaited(_jumpTo(value)),
                   ),
               ],
-            ),
-            const SizedBox(height: 6),
-            Slider(
-              value: _minutes,
-              min: _minMinutes.toDouble(),
-              max: _maxMinutes.toDouble(),
-              divisions: (_maxMinutes - _minMinutes) ~/ _stepMinutes,
-              label: '$minutes 分钟',
-              onChanged: (value) => setState(() => _minutes = value),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: const [
-                  Text('5 分钟', style: TextStyle(fontSize: 12, color: SweetieColors.textLight)),
-                  Text('90 分钟', style: TextStyle(fontSize: 12, color: SweetieColors.textLight)),
-                ],
-              ),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -568,19 +598,144 @@ class _DurationSheetState extends State<_DurationSheet> {
                 style: FilledButton.styleFrom(
                   backgroundColor: SweetieColors.pink,
                   foregroundColor: SweetieColors.white,
+                  disabledBackgroundColor: SweetieColors.pink.withValues(alpha: 0.28),
+                  disabledForegroundColor: SweetieColors.white.withValues(alpha: 0.75),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   shape: const RoundedRectangleBorder(
                     borderRadius: SweetieTheme.cardRadius,
                   ),
                 ),
-                onPressed: () =>
-                    Navigator.of(context).pop(Duration(minutes: minutes)),
-                child: const Text('确认'),
+                // 全零禁用(自动虚化):避免 0 秒死循环。
+                onPressed: _isZero
+                    ? null
+                    : () => Navigator.of(context).pop(picked),
+                child: Text(_isZero ? '至少选 1 秒' : '确认设定'),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  bool _matches(Duration value) => _picked == value;
+
+  /// 三列滚轮 + 贯穿的选中粉底条。
+  Widget _wheels() {
+    return SizedBox(
+      height: _itemExtent * 5,
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          // 选中指示条:横向贯穿三列的半透明草莓粉。
+          Positioned(
+            left: 8,
+            right: 8,
+            height: _itemExtent,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0x1AFF8595),
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
+          // 上下虚化:让未选中的数字随距离淡出(ShaderMask 只作用于本层)。
+          ShaderMask(
+            blendMode: BlendMode.dstIn,
+            shaderCallback: (Rect rect) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: <Color>[
+                Colors.transparent,
+                Colors.white,
+                Colors.white,
+                Colors.transparent,
+              ],
+              stops: <double>[0.0, 0.30, 0.70, 1.0],
+            ).createShader(rect),
+            child: Row(
+              children: <Widget>[
+                _wheel(
+                  controller: _hourCtrl,
+                  count: _maxHours + 1,
+                  unit: '时',
+                  onChanged: (int v) => setState(() => _hours = v),
+                ),
+                _wheel(
+                  controller: _minuteCtrl,
+                  count: 60,
+                  unit: '分',
+                  onChanged: (int v) => setState(() => _minutes = v),
+                ),
+                _wheel(
+                  controller: _secondCtrl,
+                  count: 60,
+                  unit: '秒',
+                  onChanged: (int v) => setState(() => _seconds = v),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _wheel({
+    required FixedExtentScrollController controller,
+    required int count,
+    required String unit,
+    required ValueChanged<int> onChanged,
+  }) {
+    return Expanded(
+      child: Stack(
+        alignment: Alignment.center,
+        children: <Widget>[
+          ListWheelScrollView.useDelegate(
+            controller: controller,
+            itemExtent: _itemExtent,
+            perspective: 0.002,
+            diameterRatio: 1.7,
+            physics: const FixedExtentScrollPhysics(),
+            onSelectedItemChanged: (int index) {
+              onChanged(index);
+              // 每跨过一格给一次轻反馈,滚动"有手感"。
+              unawaited(HapticFeedback.selectionClick());
+            },
+            childDelegate: ListWheelChildBuilderDelegate(
+              childCount: count,
+              builder: (BuildContext context, int index) => Center(
+                child: Text(
+                  index.toString().padLeft(2, '0'),
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2D2D2D),
+                    fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // 单位小字:贴在选中行右缘,浅粉不抢数字。
+          IgnorePointer(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 2),
+                child: Text(
+                  unit,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: SweetieColors.pink.withValues(alpha: 0.65),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -591,9 +746,13 @@ class _PresetChip extends StatelessWidget {
     required this.minutes,
     required this.active,
     required this.onTap,
+    this.label,
   });
 
   final int minutes;
+
+  /// 自定义文案(快捷预设用「15 分钟 · 偷闲」这类词组);为空时回落到「N 分钟」。
+  final String? label;
   final bool active;
   final VoidCallback onTap;
 
@@ -611,7 +770,7 @@ class _PresetChip extends StatelessWidget {
           boxShadow: SweetieTheme.pillGlow(active: active),
         ),
         child: Text(
-          '$minutes 分钟',
+          label ?? '$minutes 分钟',
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w700,
