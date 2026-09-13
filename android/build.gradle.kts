@@ -22,9 +22,11 @@ subprojects {
 }
 // 沙箱离线:pub 原生插件(如 package:jni)默认索取 NDK 28 / build-tools 36 / cmake(本地均无完整包)。
 // 子工程脚本会覆盖写入，必须 afterEvaluate;且必须无条件注册(注册顺序决定执行顺序，早于 AGP 回调)。
+// 仅沙箱生效(SWEETIE_SANDBOX=1，由 @env/env.sh 注入)：CI 有公网，走 AGP 默认下载即可。
 subprojects {
     // evaluationDependsOn 可能已提前求值(如 :app 自身)，此时不可再注册 afterEvaluate，直接跳过。
     if (project.state.executed) return@subprojects
+    if (System.getenv("SWEETIE_SANDBOX") != "1") return@subprojects
     afterEvaluate {
         extensions.findByName("android")?.let { ext ->
             try {
