@@ -74,6 +74,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "${{ github.ref_name }}" \
-            build/app/outputs/flutter-apk/app-release.apk \
-            --clobber
+          # 附件名带版本号（SweetieCountdown-1.0.2.apk），下载下来一眼能认；
+          # 本地构建仍叫 app-release.apk（Flutter 工具链认这个名字，不能改）。
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="SweetieCountdown-${VERSION}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$ASSET"
+          gh release upload "${{ github.ref_name }}" "$ASSET" --clobber
