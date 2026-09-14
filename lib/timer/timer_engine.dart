@@ -1,5 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+
+import '../settings/translation_settings.dart' show kSettingsBoxName;
+import '../stats/focus_record.dart';
+import '../stats/stats_logic.dart' show saveFocusRecord;
+import 'timer_session_store.dart';
 
 /// 计时模式:倒计时(番茄钟)/ 正计时(秒表)。
 enum TimerMode { countdown, stopwatch }
@@ -395,28 +402,143 @@ final timerEngineProvider =
     NotifierProvider<TimerEngineNotifier, TimerEngine>(TimerEngineNotifier.new);
 
 class TimerEngineNotifier extends Notifier<TimerEngine> {
+  /// 会话快照存储（与翻译设置共用 `app_settings` 箱）。
+  /// Hive 未就绪时返回 null —— 持久化静默跳过，计时功能本身不受影响。
+  TimerSessionStore? get _sessionStore {
+    if (!Hive.isBoxOpen(kSettingsBoxName)) return null;
+    try {
+      return TimerSessionStore(Hive.box<dynamic>(kSettingsBoxName));
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
-  TimerEngine build() => const TimerEngine();
+  TimerEngine build() {
+    final TimerSession? session = _sessionStore?.read();
+    if (session == null) return const TimerEngine();
+    return _restore(session);
+  }
+
+  /// 从快照恢复计时器：杀后台/被系统回收后回来，读数依然准确。
+  ///
+  /// 规则（时间戳全是绝对值，恢复不需要"补计时"）：
+  /// - 暂停中 → 原样恢复，用户点「继续」接着走；
+  /// - 倒计时运行中且**杀后台期间已经到点** → 补落一条记录后回到空闲；
+  /// - 其余运行中 → 按原状态恢复（倒计时剩余 = `endAt - now`，正计时已用 = `now - start - 暂停`）；
+  /// - 快照超过 24 小时未更新 → 视为过期丢弃，避免出现「已计时 3 天」这种脏数据。
+  TimerEngine _restore(TimerSession session) {
+    final DateTime now = DateTime.now();
+    final DateTime savedAt =
+        DateTime.fromMillisecondsSinceEpoch(session.savedAtMs);
+    if (now.difference(savedAt) > const Duration(hours: 24)) {
+      unawaited(_clearPersisted());
+      return const TimerEngine();
+    }
+
+    final TimerMode mode = session.mode == 'stopwatch'
+        ? TimerMode.stopwatch
+        : TimerMode.countdown;
+    final DateTime? endAt = session.endAtMs == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(session.endAtMs!);
+
+    // 杀后台期间倒计时已经走完：补一条记录（用户确实专注了那么久），回到空闲。
+    if (mode == TimerMode.countdown && endAt != null && !now.isBefore(endAt)) {
+      unawaited(_recordFinishedSession(session, endAt));
+      unawaited(_clearPersisted());
+      return const TimerEngine();
+    }
+
+    return TimerEngine(
+      mode: mode,
+      total: Duration(milliseconds: session.totalMs),
+      startedAt: DateTime.fromMillisecondsSinceEpoch(session.startedAtMs),
+      endAt: endAt,
+      pausedAt: session.pausedAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(session.pausedAtMs!),
+      pausedTotal: Duration(milliseconds: session.pausedTotalMs),
+    );
+  }
+
+  /// 补落「杀后台期间自然到点」的专注记录（失败只影响统计，不打断启动）。
+  Future<void> _recordFinishedSession(TimerSession session, DateTime endAt) async {
+    final DateTime start =
+        DateTime.fromMillisecondsSinceEpoch(session.startedAtMs);
+    final Duration elapsed =
+        endAt.difference(start) - Duration(milliseconds: session.pausedTotalMs);
+    if (elapsed < const Duration(seconds: 1)) return;
+    try {
+      await saveFocusRecord(
+        FocusRecord.fromDuration(
+          start: start,
+          duration: elapsed,
+          tag: session.tag.trim().isEmpty ? defaultFocusTag : session.tag,
+        ),
+      );
+    } catch (_) {
+      // 落库失败只影响统计。
+    }
+  }
+
+  /// 把当前状态写成快照；未开始时清掉旧快照（空闲不该留残留）。
+  Future<void> _persist() async {
+    final TimerSessionStore? store = _sessionStore;
+    if (store == null) return;
+    final TimerEngine engine = state;
+    final DateTime? startedAt = engine.startedAt;
+    if (startedAt == null) {
+      await store.clear();
+      return;
+    }
+    await store.save(
+      TimerSession(
+        mode: engine.mode == TimerMode.stopwatch ? 'stopwatch' : 'countdown',
+        totalMs: engine.total.inMilliseconds,
+        startedAtMs: startedAt.millisecondsSinceEpoch,
+        pausedAtMs: engine.pausedAt?.millisecondsSinceEpoch,
+        pausedTotalMs: engine.pausedTotal.inMilliseconds,
+        endAtMs: engine.endAt?.millisecondsSinceEpoch,
+        tag: ref.read(selectedTagProvider) ?? defaultFocusTag,
+        savedAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+  }
+
+  Future<void> _clearPersisted() async => _sessionStore?.clear();
 
   /// 切换模式会结束当前一轮(回到未开始)。
   void setMode(TimerMode mode) {
-    if (state.mode != mode) state = state.withMode(mode);
+    if (state.mode == mode) return;
+    state = state.withMode(mode);
+    unawaited(_persist());
   }
 
   /// 设置本轮时长;进行中不允许改。
   void setDuration(Duration duration) {
     if (state.isActive || state.total == duration) return;
     state = state.withDuration(duration);
+    unawaited(_persist());
   }
 
-  void start({Duration? duration}) => state = state.start(
-        DateTime.now(),
-        duration: duration,
-      );
+  void start({Duration? duration}) {
+    state = state.start(DateTime.now(), duration: duration);
+    unawaited(_persist());
+  }
 
-  void pause() => state = state.pause(DateTime.now());
+  void pause() {
+    state = state.pause(DateTime.now());
+    unawaited(_persist());
+  }
 
-  void resume() => state = state.resume(DateTime.now());
+  void resume() {
+    state = state.resume(DateTime.now());
+    unawaited(_persist());
+  }
 
-  void reset() => state = state.reset();
+  void reset() {
+    state = state.reset();
+    unawaited(_clearPersisted());
+  }
 }
