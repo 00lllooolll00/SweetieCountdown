@@ -6,7 +6,8 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../theme/sweetie_theme.dart';
 import 'reading_service.dart';
 
-/// 启动页：随机一句语录上浮 + Fade-in 3s，然后进主页；点击任意处跳过。
+/// 启动页：随机一句语录上浮 + 渐显（1.2s 内浮现完），随后稳定停留 3s 再进主页；
+/// 点击任意处随时跳过。
 ///
 /// 两种接法都支持：
 ///  * `SplashPage(next: (_) => const SweetieHomeShell())` —— 3s 后 pushReplacement；
@@ -26,7 +27,8 @@ class SplashPage extends StatefulWidget {
   /// 停留时长（默认 3s，或点击跳过）之后进入的主界面。
   final WidgetBuilder? next;
 
-  /// 停留时长。
+  /// 浮现动效完成后的【稳定停留时长】。
+  /// 实际总时长 = 浮现动效([_introDuration]) + 本值。
   final Duration duration;
 
   /// 主壳自己控制切换时用（overlay 模式，不做路由跳转）。
@@ -61,7 +63,9 @@ class _SplashPageState extends State<SplashPage> {
       // main 若没预热，这里补一次；失败保持内置兜底。
       unawaited(_loadQuotes());
     }
-    _timer = Timer(widget.duration, _leave);
+    // 总停留 = 浮现动效 + 稳定显示:用户要的是"浮现完成后稳住 3 秒",
+    // 而不是"从出现到切走一共 3 秒"。
+    _timer = Timer(_introDuration + widget.duration, _leave);
   }
 
   Future<void> _loadQuotes() async {
