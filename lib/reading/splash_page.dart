@@ -6,10 +6,10 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../theme/sweetie_theme.dart';
 import 'reading_service.dart';
 
-/// 启动页：随机一句语录上浮 + Fade-in 2s，然后进主页；点击任意处跳过。
+/// 启动页：随机一句语录上浮 + Fade-in 3s，然后进主页；点击任意处跳过。
 ///
 /// 两种接法都支持：
-///  * `SplashPage(next: (_) => const SweetieHomeShell())` —— 2s 后 pushReplacement；
+///  * `SplashPage(next: (_) => const SweetieHomeShell())` —— 3s 后 pushReplacement；
 ///  * `SplashPage(onFinished: () => setState(() => _showSplash = false))` ——
 ///    主壳自己当 overlay 控制切换。
 /// 语录读 assets/quotes.json（main 里 [preloadQuotes] 预热），
@@ -18,12 +18,12 @@ class SplashPage extends StatefulWidget {
   const SplashPage({
     super.key,
     this.next,
-    this.duration = const Duration(seconds: 2),
+    this.duration = const Duration(seconds: 3),
     this.onFinished,
     this.quote,
   });
 
-  /// 2s（或点击）之后进入的主界面。
+  /// 停留时长（默认 3s，或点击跳过）之后进入的主界面。
   final WidgetBuilder? next;
 
   /// 停留时长。
@@ -43,6 +43,15 @@ class _SplashPageState extends State<SplashPage> {
   late DailyQuote _quote;
   Timer? _timer;
   bool _leaving = false;
+
+  /// 卡片浮现动效时长:取停留时长的一半且不超过 1.2s。
+  /// 动效若占满整个停留时间,卡片会"一直在动就被切走",主观上就是"闪一下"。
+  Duration get _introDuration {
+    final Duration half = widget.duration ~/ 2;
+    return half < const Duration(milliseconds: 1200)
+        ? half
+        : const Duration(milliseconds: 1200);
+  }
 
   @override
   void initState() {
@@ -162,11 +171,11 @@ class _SplashPageState extends State<SplashPage> {
       ),
     )
         .animate(key: ValueKey<String>(quote.en))
-        .fadeIn(duration: widget.duration, curve: Curves.easeOut)
+        .fadeIn(duration: _introDuration, curve: Curves.easeOut)
         .slideY(
           begin: 0.32,
           end: 0,
-          duration: widget.duration,
+          duration: _introDuration,
           curve: Curves.easeOutBack,
         );
   }
