@@ -1,7 +1,7 @@
 name: sweetie_countdown
 description: "SweetieCountdown —— 甜系番茄钟：绝对时间戳专注计时、治愈阅读与专注统计。"
 publish_to: "none"
-version: 1.0.1+2
+version: 1.0.2+3
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
