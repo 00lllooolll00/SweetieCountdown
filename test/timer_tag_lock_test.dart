@@ -1,9 +1,15 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:sweetie_countdown/settings/translation_settings.dart';
 import 'package:sweetie_countdown/theme/sweetie_theme.dart';
 import 'package:sweetie_countdown/timer/timer_engine.dart';
 import 'package:sweetie_countdown/timer/timer_page.dart';
+import 'package:sweetie_countdown/timer/timer_session_store.dart';
 
 /// 计时中锁定标签：倒计时/正计时处于「进行中」或「暂停」时，
 /// 标签条必须不可点（不允许中途换 Tag，避免记录归属混乱）；
@@ -97,5 +103,104 @@ void main() {
     await tester.tap(find.text('# 学习'), warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 400));
     expect(container.read(selectedTagProvider), '学习', reason: '结束后应恢复自由切换');
+  });
+
+  /// 防回归：正计时选了自定义 Tag A，后台跑久了被系统杀掉，
+  /// 回来后计时轮从快照恢复，选中标签也必须跟着快照走，
+  /// 不能回落到历史第一位（否则整轮记录归到错误的 Tag B）。
+  test('有计时快照：选中标签从快照恢复，不回落历史第一位', () async {
+    final Directory tempDir =
+        await Directory.systemTemp.createTemp('sweetie_tag_restore_test');
+    Hive.init(tempDir.path);
+    final Box<dynamic> box = await Hive.openBox<dynamic>(kSettingsBoxName);
+    addTearDown(() async {
+      await Hive.close();
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    // 杀后台前：正计时运行中，绑定 Tag A。
+    final DateTime start = DateTime.now().subtract(const Duration(minutes: 30));
+    await box.put(
+      TimerSessionStore.sessionKey,
+      jsonEncode(
+        TimerSession(
+          mode: 'stopwatch',
+          totalMs: 0,
+          startedAtMs: start.millisecondsSinceEpoch,
+          pausedTotalMs: 0,
+          tag: 'Tag A',
+          savedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ).toJson(),
+      ),
+    );
+
+    final ProviderContainer container = ProviderContainer(
+      overrides: <Override>[
+        tagStoreProvider.overrideWithValue(
+          TagStore(
+            MemoryTagStorage(),
+            // 故意让历史第一位是别的标签:回归时旧的回落逻辑会选中它。
+            defaultTags: const <String>['Tag B', 'Tag A'],
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    expect(
+      container.read(selectedTagProvider),
+      'Tag A',
+      reason: '杀后台恢复后，选中标签应跟随快照，而不是历史第一位',
+    );
+    expect(
+      container.read(timerEngineProvider).mode,
+      TimerMode.stopwatch,
+      reason: '前置：计时轮本身也从快照恢复为正计时',
+    );
+  });
+
+  /// 防回归：杀后台期间已到点的倒计时会被引擎补落清空(回到空闲),
+  /// 标签也必须跟着回落历史第一位,不能选中快照里的 stale 标签。
+  test('倒计时已到点的快照：不恢复快照标签，回落历史第一位', () async {
+    final Directory tempDir =
+        await Directory.systemTemp.createTemp('sweetie_tag_restore_test');
+    Hive.init(tempDir.path);
+    final Box<dynamic> box = await Hive.openBox<dynamic>(kSettingsBoxName);
+    addTearDown(() async {
+      await Hive.close();
+      if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    });
+
+    // 倒计时 25 分钟,杀后台期间已走完 → 引擎会清掉快照回空闲。
+    final DateTime start = DateTime.now().subtract(const Duration(minutes: 30));
+    await box.put(
+      TimerSessionStore.sessionKey,
+      jsonEncode(
+        TimerSession(
+          mode: 'countdown',
+          totalMs: 25 * 60 * 1000,
+          startedAtMs: start.millisecondsSinceEpoch,
+          pausedTotalMs: 0,
+          endAtMs: start.add(const Duration(minutes: 25)).millisecondsSinceEpoch,
+          tag: 'Tag A',
+          savedAtMs: DateTime.now().millisecondsSinceEpoch,
+        ).toJson(),
+      ),
+    );
+
+    final ProviderContainer container = ProviderContainer(
+      overrides: <Override>[
+        tagStoreProvider.overrideWithValue(
+          TagStore(
+            MemoryTagStorage(),
+            defaultTags: const <String>['Tag B', 'Tag A'],
+          ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    expect(container.read(selectedTagProvider), 'Tag B',
+        reason: '这一轮已结束,空闲启动应选中历史第一位的 Tag B');
   });
 }

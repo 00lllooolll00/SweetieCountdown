@@ -389,8 +389,43 @@ final selectedTagProvider =
 class SelectedTagNotifier extends Notifier<String?> {
   @override
   String? build() {
+    // 有进行中/暂停中的计时快照时,选中标签跟着快照走:
+    // 杀后台恢复后计时轮还在,标签若回落到历史第一位,会把整轮
+    // 归到错误的 Tag 上(复现:正计时选 Tag A → 后台被杀 → 回来变 Tag B)。
+    // 快照里没有这一轮(空闲启动)时才回落到历史第一位。
+    final TimerSession? session = _readSession();
+    if (session != null && session.tag.trim().isNotEmpty) {
+      return session.tag;
+    }
     final tags = ref.read(tagHistoryProvider);
     return tags.isEmpty ? null : tags.first;
+  }
+
+  /// 快照不可用(未初始化/已关闭)时静默当没有,计时本身不受影响。
+  ///
+  /// 有效性与引擎侧 `_restore` 完全镜像:过期快照会被引擎丢弃、
+  /// 杀后台期间已到点的倒计时会补落清空(且清空是 unawaited,读时可能
+  /// 还没落盘)——这两种情况下标签若仍取快照值,空闲启动会选中 stale 标签。
+  TimerSession? _readSession() {
+    if (!Hive.isBoxOpen(kSettingsBoxName)) return null;
+    try {
+      final TimerSession? session =
+          TimerSessionStore(Hive.box<dynamic>(kSettingsBoxName)).read();
+      if (session == null) return null;
+      final DateTime now = DateTime.now();
+      final DateTime savedAt =
+          DateTime.fromMillisecondsSinceEpoch(session.savedAtMs);
+      if (now.difference(savedAt) > const Duration(hours: 24)) return null;
+      final int? endAtMs = session.endAtMs;
+      if (session.mode != 'stopwatch' &&
+          endAtMs != null &&
+          !now.isBefore(DateTime.fromMillisecondsSinceEpoch(endAtMs))) {
+        return null;
+      }
+      return session;
+    } catch (_) {
+      return null;
+    }
   }
 
   void select(String? tag) {
